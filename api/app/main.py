@@ -5,7 +5,7 @@ from app.config import settings
 from app.errors import ApiError
 from app.logging import RequestIdMiddleware, configure_logging
 from app.router import Registry
-from app.routes import health
+from app.routes import health, models
 
 
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -23,6 +23,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.include_router(health.router)
+    app.include_router(models.router)
     return app
 
 
