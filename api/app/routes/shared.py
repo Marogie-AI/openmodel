@@ -1,10 +1,12 @@
 import contextlib
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 
 from fastapi import Request
 
 from app.backends.ollama import OllamaBackend
 from app.errors import ApiError
+from app.metrics import observe_ttft, record_usage, track
 from app.router import Capability, Registry
 from app.schemas.backend import ChatDelta
 from app.sse import DONE, error_event
@@ -37,20 +39,32 @@ async def stream_events(
     request: Request,
     deltas: AsyncGenerator[ChatDelta, None],
     chunk: ChunkFactory,
+    model: str,
+    endpoint: str,
     prelude: bytes | None = None,
 ) -> AsyncIterator[bytes]:
     if prelude is not None:
         yield prelude
-    try:
-        # aclosing: a disconnect must close the backend generator, cancelling the upstream request.
-        async with contextlib.aclosing(deltas) as stream:
-            async for delta in stream:
-                if await request.is_disconnected():
-                    return
-                if delta.content:
-                    yield chunk(delta.content, None)
-                if delta.done:
-                    yield chunk("", delta)
-    except ApiError as exc:
-        yield error_event(exc)
+    async with track(model, endpoint) as tracked:
+        start = time.perf_counter()
+        first_token = True
+        try:
+            # aclosing: a disconnect closes the backend generator, cancelling the upstream call.
+            async with contextlib.aclosing(deltas) as stream:
+                async for delta in stream:
+                    if await request.is_disconnected():
+                        return
+                    if delta.content:
+                        if first_token:
+                            observe_ttft(model, time.perf_counter() - start)
+                            first_token = False
+                        yield chunk(delta.content, None)
+                    if delta.done:
+                        if delta.usage is not None:
+                            record_usage(model, delta.usage)
+                        yield chunk("", delta)
+        except ApiError as exc:
+            # The error is delivered in-stream rather than raised, so count it here.
+            tracked.failed()
+            yield error_event(exc)
     yield DONE

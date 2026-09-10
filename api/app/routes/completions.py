@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.errors import PromptListUnsupported
+from app.metrics import observe_ttft, record_usage, track
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
 from app.schemas.backend import ChatDelta, ChatResult
 from app.schemas.chat import UsageOut
@@ -45,12 +46,22 @@ async def completions(request: Request, body: CompletionRequest) -> Completion |
             return sse(completion(choice, usage).model_dump_json(exclude_none=True))
 
         return StreamingResponse(
-            stream_events(request, backend.generate_stream(body.model, prompt, options), event),
+            stream_events(
+                request,
+                backend.generate_stream(body.model, prompt, options),
+                event,
+                body.model,
+                "completion",
+            ),
             media_type="text/event-stream",
             headers=STREAM_HEADERS,
         )
 
-    result: ChatResult = await backend.generate(body.model, prompt, options)
+    async with track(body.model, "completion"):
+        start = time.perf_counter()
+        result: ChatResult = await backend.generate(body.model, prompt, options)
+        observe_ttft(body.model, time.perf_counter() - start)
+        record_usage(body.model, result.usage)
     return completion(
         CompletionChoice(text=result.content, finish_reason=result.finish_reason),
         UsageOut.of(result.usage),

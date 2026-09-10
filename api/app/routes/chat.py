@@ -4,6 +4,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from app.metrics import observe_ttft, record_usage, track
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
 from app.schemas.backend import ChatDelta, ChatResult
 from app.schemas.chat import (
@@ -57,13 +58,19 @@ async def chat_completions(
                 request,
                 backend.chat_stream(body.model, messages, options),
                 event,
+                body.model,
+                "chat",
                 prelude=chunk({"role": "assistant", "content": ""}),
             ),
             media_type="text/event-stream",
             headers=STREAM_HEADERS,
         )
 
-    result: ChatResult = await backend.chat(body.model, messages, options)
+    async with track(body.model, "chat"):
+        start = time.perf_counter()
+        result: ChatResult = await backend.chat(body.model, messages, options)
+        observe_ttft(body.model, time.perf_counter() - start)
+        record_usage(body.model, result.usage)
     return ChatCompletion(
         id=completion_id,
         created=created,
