@@ -9,8 +9,9 @@ from app.backends.ollama import OllamaBackend
 from app.config import settings
 from app.errors import ApiError, envelope
 from app.logging import RequestIdMiddleware, configure_logging
+from app.metrics import MetricsMiddleware
 from app.router import Registry
-from app.routes import chat, completions, embeddings, health, models
+from app.routes import chat, completions, embeddings, health, metrics, models
 
 
 @asynccontextmanager
@@ -44,12 +45,14 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app = FastAPI(title="OpenModel API", lifespan=lifespan)
     app.state.registry = registry or Registry.from_yaml(settings.models_file)
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(chat.router)
     app.include_router(completions.router)
     app.include_router(embeddings.router)
+    app.include_router(metrics.router)
     return app
 
 
