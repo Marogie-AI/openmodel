@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal, TypeVar
 
 import httpx
@@ -58,7 +58,7 @@ class OllamaBackend:
 
     def chat_stream(
         self, model: str, messages: list[dict[str, str]], options: dict[str, float | int]
-    ) -> AsyncIterator[ChatDelta]:
+    ) -> AsyncGenerator[ChatDelta, None]:
         body = _body({"model": model, "messages": messages}, options, stream=True)
         return self._stream("/api/chat", body, _chat_content)
 
@@ -73,7 +73,7 @@ class OllamaBackend:
 
     def generate_stream(
         self, model: str, prompt: str, options: dict[str, float | int]
-    ) -> AsyncIterator[ChatDelta]:
+    ) -> AsyncGenerator[ChatDelta, None]:
         body = _body({"model": model, "prompt": prompt}, options, stream=True)
         return self._stream("/api/generate", body, _generate_content)
 
@@ -95,7 +95,7 @@ class OllamaBackend:
 
     async def _stream(
         self, path: str, body: dict[str, Any], content_of: Callable[[dict[str, Any]], str]
-    ) -> AsyncIterator[ChatDelta]:
+    ) -> AsyncGenerator[ChatDelta, None]:
         async with contextlib.AsyncExitStack() as stack:
             # Only establishing the stream is retried; once bytes flow we never replay it.
             response = await self._send(

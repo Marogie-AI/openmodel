@@ -1,3 +1,4 @@
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -70,17 +71,20 @@ async def _stream_events(
 
     yield chunk({"role": "assistant", "content": ""})
     try:
-        async for delta in backend.chat_stream(body.model, messages, _options(body)):
-            if await request.is_disconnected():
-                return
-            if delta.done:
-                yield chunk(
-                    {},
-                    finish_reason=delta.finish_reason,
-                    usage=UsageOut.of(delta.usage) if delta.usage else None,
-                )
-            elif delta.content:
-                yield chunk({"content": delta.content})
+        stream = backend.chat_stream(body.model, messages, _options(body))
+        # aclosing: a disconnect must close the backend generator, cancelling the upstream request.
+        async with contextlib.aclosing(stream) as deltas:
+            async for delta in deltas:
+                if await request.is_disconnected():
+                    return
+                if delta.content:
+                    yield chunk({"content": delta.content})
+                if delta.done:
+                    yield chunk(
+                        {},
+                        finish_reason=delta.finish_reason,
+                        usage=UsageOut.of(delta.usage) if delta.usage else None,
+                    )
     except ApiError as exc:
         error = {"message": exc.message, "type": exc.type, "code": exc.code}
         yield _event(json.dumps({"error": error}))

@@ -1,10 +1,15 @@
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+import pytest
 import respx
+from fastapi import Request
 from httpx import AsyncClient
 
+from app.backends.ollama import OllamaBackend
+from app.schemas.backend import ChatDelta, Usage
 from tests.conftest import BACKEND_URL
 
 CHAT_URL = f"{BACKEND_URL}/api/chat"
@@ -187,3 +192,70 @@ async def test_stream_backend_failure_emits_error_event_then_done(client: AsyncC
         }
     }
     assert events[-1] == "[DONE]"
+
+
+@respx.mock
+async def test_stream_emits_content_carried_on_the_done_line(client: AsyncClient) -> None:
+    respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text=ndjson(
+                {
+                    "message": {"content": "x"},
+                    "done": True,
+                    "done_reason": "stop",
+                    "prompt_eval_count": 1,
+                    "eval_count": 1,
+                }
+            ),
+        )
+    )
+
+    events = await sse_data(client, {**BODY, "stream": True})
+
+    chunks = [json.loads(event) for event in events[:-1]]
+    assert [chunk["choices"][0]["delta"] for chunk in chunks] == [
+        {"role": "assistant", "content": ""},
+        {"content": "x"},
+        {},
+    ]
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+    assert chunks[-1]["usage"]["total_tokens"] == 2
+    assert events[-1] == "[DONE]"
+
+
+async def _resolved(value: bool) -> bool:
+    return value
+
+
+async def test_stream_disconnect_stops_and_closes_the_backend_stream(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    consumed: list[str] = []
+    closed = False
+
+    async def deltas(*_args: Any, **_kwargs: Any) -> AsyncIterator[ChatDelta]:
+        nonlocal closed
+        try:
+            for text in ("a", "b"):
+                consumed.append(text)
+                yield ChatDelta(content=text, done=False)
+            yield ChatDelta(
+                content="", done=True, usage=Usage(prompt_tokens=1, completion_tokens=1)
+            )
+        finally:
+            closed = True
+
+    disconnects = iter([False, True])
+    monkeypatch.setattr(OllamaBackend, "chat_stream", deltas)
+    monkeypatch.setattr(Request, "is_disconnected", lambda _self: _resolved(next(disconnects)))
+
+    events = await sse_data(client, {**BODY, "stream": True})
+
+    assert [json.loads(event)["choices"][0]["delta"] for event in events] == [
+        {"role": "assistant", "content": ""},
+        {"content": "a"},
+    ]
+    assert "[DONE]" not in events
+    assert consumed == ["a", "b"]
+    assert closed
