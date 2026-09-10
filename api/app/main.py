@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.backends.ollama import OllamaBackend
 from app.config import settings
-from app.errors import ApiError
+from app.errors import ApiError, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.router import Registry
 from app.routes import chat, health, models
@@ -35,7 +35,7 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ApiError)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"message": exc.message, "type": exc.type, "code": exc.code}},
+        content=envelope(exc),
     )
 
 

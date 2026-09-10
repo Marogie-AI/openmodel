@@ -10,6 +10,11 @@ class ApiError(Exception):
         self.message = message
 
 
+def envelope(exc: ApiError) -> dict[str, object]:
+    """The OpenAI error envelope, shared by the exception handler and in-stream error events."""
+    return {"error": {"message": exc.message, "type": exc.type, "code": exc.code}}
+
+
 class UnknownModel(ApiError):
     status_code = 404
     type = "invalid_request_error"
