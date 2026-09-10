@@ -19,9 +19,12 @@ TEST_REGISTRY = Registry(
 
 
 async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
-    """Client for an app built on `registry`."""
+    """Client for an app built on `registry`, with the lifespan (app.state.http) entered."""
     app = create_app(registry)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
         yield client
 
 

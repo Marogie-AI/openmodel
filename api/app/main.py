@@ -1,3 +1,7 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -6,6 +10,19 @@ from app.errors import ApiError
 from app.logging import RequestIdMiddleware, configure_logging
 from app.router import Registry
 from app.routes import health, models
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    timeout = httpx.Timeout(
+        connect=settings.backend_connect_timeout_s,
+        read=settings.backend_read_timeout_s,
+        write=10,
+        pool=10,
+    )
+    async with httpx.AsyncClient(timeout=timeout) as http:
+        app.state.http = http
+        yield
 
 
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -18,7 +35,7 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
 
 def create_app(registry: Registry | None = None) -> FastAPI:
     configure_logging(settings.log_level)
-    app = FastAPI(title="OpenModel API")
+    app = FastAPI(title="OpenModel API", lifespan=lifespan)
     app.state.registry = registry or Registry.from_yaml(settings.models_file)
     app.add_middleware(RequestIdMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
