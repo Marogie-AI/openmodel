@@ -1,0 +1,31 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull qwen2.5:0.5b && ollama pull nomic-embed-text"]
+    restart: "no"
+
+  api:
+    build: ./api
+    ports:
+      - "${OPENMODEL_HOST_PORT:-8000}:8000"
+    environment:
+      OPENMODEL_MODELS_FILE: /app/models.compose.yaml
+    volumes:
+      - ./api/models.compose.yaml:/app/models.compose.yaml:ro
+    depends_on:
+      - ollama
+
+volumes:
+  ollama:
