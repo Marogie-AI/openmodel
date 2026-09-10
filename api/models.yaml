@@ -1,0 +1,7 @@
+models:
+  - name: qwen2.5:0.5b
+    backend_url: http://localhost:11434
+    capabilities: [chat, completion]
+  - name: nomic-embed-text
+    backend_url: http://localhost:11434
+    capabilities: [embedding]
