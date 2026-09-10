@@ -16,9 +16,11 @@ Three services start:
 - `ollama-pull` — a one-shot job that pulls `qwen2.5:0.5b` and `nomic-embed-text`, then exits 0. The first run downloads ~700 MB.
 - `api` — the gateway on <http://localhost:8000>.
 
-`api` only waits for `ollama` to start, not for the pull to finish, so on a cold
-volume the API is up while the weights are still downloading and `/ready`
-answers 503 until they land. Watch the download:
+`api` only waits for `ollama` to start, not for the pull to finish. Readiness
+means the backends answer, not that the models are pulled: on a cold volume
+`/ready` is already 200 while the weights download, and a chat request fails
+with `502 "Backend returned HTTP 404: model ... not found"` until they land.
+Watch the download:
 
 ```sh
 docker compose logs -f ollama-pull
@@ -43,6 +45,12 @@ curl -N localhost:8000/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"Say hi."}],"stream":true}'
 
 curl localhost:8000/metrics
+```
+
+The end-to-end acceptance tests run against the live stack (default port 8000):
+
+```sh
+cd api && OPENMODEL_BASE_URL=http://localhost:8010/v1 uv run pytest -m e2e
 ```
 
 What to look for:
