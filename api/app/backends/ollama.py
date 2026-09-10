@@ -1,12 +1,15 @@
 import asyncio
+import contextlib
 import json
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Literal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Literal, TypeVar
 
 import httpx
 
 from app.errors import BackendTimeout, BackendUnavailable
 from app.schemas.backend import ChatDelta, ChatResult, EmbedResult, Usage
+
+T = TypeVar("T")
 
 
 def _body(payload: dict[str, Any], options: dict[str, float | int], stream: bool) -> dict[str, Any]:
@@ -37,7 +40,7 @@ def _generate_content(data: dict[str, Any]) -> str:
 
 
 class OllamaBackend:
-    """Talks to one Ollama server, retrying only connection failures."""
+    """Talks to one Ollama server, retrying only failures to establish a connection."""
 
     def __init__(self, client: httpx.AsyncClient, base_url: str, retries: int) -> None:
         self._client = client
@@ -82,52 +85,59 @@ class OllamaBackend:
         )
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        attempt = 0
-        while True:
-            try:
-                response = await self._client.post(self._base_url + path, json=body)
-                self._check(response.status_code)
-                data: dict[str, Any] = response.json()
-                return data
-            except httpx.ReadTimeout as exc:
-                raise BackendTimeout(f"Backend timed out on {path}.") from exc
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                if attempt >= self._retries:
-                    raise BackendUnavailable(f"Cannot reach backend at {self._base_url}.") from exc
-                await asyncio.sleep(0.1 * 2**attempt)
-                attempt += 1
+        response = await self._send(lambda: self._client.post(self._base_url + path, json=body))
+        self._check(response.status_code)
+        try:
+            data: dict[str, Any] = response.json()
+        except json.JSONDecodeError as exc:
+            raise BackendUnavailable(f"Backend sent malformed JSON from {path}.") from exc
+        return data
 
     async def _stream(
         self, path: str, body: dict[str, Any], content_of: Callable[[dict[str, Any]], str]
     ) -> AsyncIterator[ChatDelta]:
+        async with contextlib.AsyncExitStack() as stack:
+            # Only establishing the stream is retried; once bytes flow we never replay it.
+            response = await self._send(
+                lambda: stack.enter_async_context(
+                    self._client.stream("POST", self._base_url + path, json=body)
+                )
+            )
+            self._check(response.status_code)
+            try:
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    data: dict[str, Any] = json.loads(line)
+                    if "error" in data:
+                        raise BackendUnavailable(f"Backend error: {data['error']}")
+                    done = bool(data.get("done"))
+                    yield ChatDelta(
+                        content=content_of(data),
+                        done=done,
+                        usage=_usage(data) if done else None,
+                        finish_reason=_finish_reason(data) if done else None,
+                    )
+            except httpx.ReadTimeout as exc:
+                raise BackendTimeout(f"Backend timed out on {path}.") from exc
+            except (httpx.HTTPError, json.JSONDecodeError) as exc:
+                raise BackendUnavailable(f"Backend stream failed on {path}: {exc}") from exc
+
+    async def _send(self, send: Callable[[], Awaitable[T]]) -> T:
+        """Run `send`, retrying connection failures and mapping transport errors to ApiError."""
         attempt = 0
         while True:
             try:
-                async with self._client.stream(
-                    "POST", self._base_url + path, json=body
-                ) as response:
-                    self._check(response.status_code)
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        data: dict[str, Any] = json.loads(line)
-                        if "error" in data:
-                            raise BackendUnavailable(f"Backend error: {data['error']}")
-                        done = bool(data.get("done"))
-                        yield ChatDelta(
-                            content=content_of(data),
-                            done=done,
-                            usage=_usage(data) if done else None,
-                            finish_reason=_finish_reason(data) if done else None,
-                        )
-                return
-            except httpx.ReadTimeout as exc:
-                raise BackendTimeout(f"Backend timed out on {path}.") from exc
+                return await send()
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 if attempt >= self._retries:
                     raise BackendUnavailable(f"Cannot reach backend at {self._base_url}.") from exc
                 await asyncio.sleep(0.1 * 2**attempt)
                 attempt += 1
+            except httpx.ReadTimeout as exc:
+                raise BackendTimeout(f"Backend at {self._base_url} timed out.") from exc
+            except httpx.HTTPError as exc:
+                raise BackendUnavailable(f"Backend request failed: {exc}") from exc
 
     def _check(self, status_code: int) -> None:
         if status_code >= 400:

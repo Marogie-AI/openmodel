@@ -26,6 +26,19 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.backends.ollama.asyncio.sleep", instant)
 
 
+class _FailingStream(httpx.AsyncByteStream):
+    """Streams `chunks`, then raises `exc` — a connection dropped mid-generation."""
+
+    def __init__(self, chunks: list[bytes], exc: Exception) -> None:
+        self._chunks = chunks
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        raise self._exc
+
+
 def ndjson(*lines: dict[str, Any]) -> str:
     return "".join(json.dumps(line) + "\n" for line in lines)
 
@@ -227,3 +240,70 @@ async def test_stream_connect_error_retries_then_succeeds(backend: OllamaBackend
 
     assert [d.content for d in deltas] == ["ok"]
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_remote_protocol_error_maps_to_backend_unavailable(backend: OllamaBackend) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(
+        side_effect=httpx.RemoteProtocolError("server disconnected")
+    )
+
+    with pytest.raises(BackendUnavailable):
+        await backend.chat("m", [], {})
+
+
+@respx.mock
+async def test_malformed_json_body_maps_to_backend_unavailable(backend: OllamaBackend) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(return_value=httpx.Response(200, text="not json"))
+
+    with pytest.raises(BackendUnavailable, match="malformed JSON"):
+        await backend.chat("m", [], {})
+
+
+@respx.mock
+async def test_stream_remote_protocol_error_maps_to_backend_unavailable(
+    backend: OllamaBackend,
+) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(
+        return_value=httpx.Response(
+            200,
+            stream=_FailingStream(
+                [b'{"message": {"content": "a"}, "done": false}\n'],
+                httpx.RemoteProtocolError("server disconnected"),
+            ),
+        )
+    )
+
+    with pytest.raises(BackendUnavailable):
+        await collect(backend.chat_stream("m", [], {}))
+
+
+@respx.mock
+async def test_stream_malformed_line_maps_to_backend_unavailable(backend: OllamaBackend) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(
+        return_value=httpx.Response(200, text="{not json}\n")
+    )
+
+    with pytest.raises(BackendUnavailable):
+        await collect(backend.chat_stream("m", [], {}))
+
+
+@respx.mock
+async def test_stream_is_never_replayed_after_yielding(backend: OllamaBackend) -> None:
+    route = respx.post(f"{BACKEND_URL}/api/chat").mock(
+        return_value=httpx.Response(
+            200,
+            stream=_FailingStream(
+                [b'{"message": {"content": "a"}, "done": false}\n'],
+                httpx.ConnectError("dropped"),
+            ),
+        )
+    )
+
+    seen = []
+    with pytest.raises(BackendUnavailable):
+        async for delta in backend.chat_stream("m", [], {}):
+            seen.append(delta.content)
+
+    assert seen == ["a"]
+    assert route.call_count == 1
