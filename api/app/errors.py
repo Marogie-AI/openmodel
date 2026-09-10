@@ -33,6 +33,15 @@ class CapabilityMismatch(ApiError):
         super().__init__(f"The model '{name}' does not support {capability}.")
 
 
+class PromptListUnsupported(ApiError):
+    status_code = 400
+    type = "invalid_request_error"
+    code = "prompt_list_unsupported"
+
+    def __init__(self) -> None:
+        super().__init__("Batched prompts are not supported; send a single prompt.")
+
+
 class BackendUnavailable(ApiError):
     status_code = 502
     type = "server_error"
