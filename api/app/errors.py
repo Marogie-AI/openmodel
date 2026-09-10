@@ -26,3 +26,15 @@ class CapabilityMismatch(ApiError):
 
     def __init__(self, name: str, capability: str) -> None:
         super().__init__(f"The model '{name}' does not support {capability}.")
+
+
+class BackendUnavailable(ApiError):
+    status_code = 502
+    type = "server_error"
+    code = "backend_unavailable"
+
+
+class BackendTimeout(ApiError):
+    status_code = 504
+    type = "server_error"
+    code = "backend_timeout"
