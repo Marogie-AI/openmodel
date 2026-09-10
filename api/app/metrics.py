@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -38,6 +39,9 @@ async def track(model: str, endpoint: str) -> AsyncIterator[Tracked]:
     llm_inflight.labels(model).inc()
     try:
         yield tracked
+    except asyncio.CancelledError:
+        # The client hung up; Starlette cancels the body task. Not our failure.
+        raise
     except BaseException:
         tracked.failed()
         raise

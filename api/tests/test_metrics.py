@@ -1,7 +1,11 @@
+import asyncio
+
 import httpx
+import pytest
 import respx
 from httpx import AsyncClient
 
+from app.metrics import track
 from tests.conftest import BACKEND_URL
 from tests.test_chat import BODY, CHAT_URL, ndjson, ollama_response, sse_data
 
@@ -169,3 +173,17 @@ async def test_embeddings_record_prompt_tokens(client: AsyncClient) -> None:
     assert response.status_code == 200
     assert await sample(client, prompt) == before[0] + 5
     assert await sample(client, ok) == before[1] + 1
+
+
+async def test_client_cancellation_is_not_an_error(client: AsyncClient) -> None:
+    error = 'llm_requests_total{endpoint="chat",model="qwen2.5:0.5b",status="error"}'
+    ok = 'llm_requests_total{endpoint="chat",model="qwen2.5:0.5b",status="ok"}'
+    before = (await sample(client, error), await sample(client, ok))
+
+    with pytest.raises(asyncio.CancelledError):
+        async with track("qwen2.5:0.5b", "chat"):
+            raise asyncio.CancelledError
+
+    assert await sample(client, error) == before[0]
+    assert await sample(client, ok) == before[1] + 1
+    assert 'llm_inflight{model="qwen2.5:0.5b"} 0.0' in (await client.get("/metrics")).text
