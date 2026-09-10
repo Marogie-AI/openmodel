@@ -3,11 +3,12 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.backends.ollama import OllamaBackend
 from app.config import settings
-from app.errors import ApiError, envelope
+from app.errors import ApiError, InvalidRequest, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
 from app.router import Registry
@@ -40,6 +41,14 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, RequestValidationError)
+    summary = "; ".join(
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
+    )
+    return await api_error_handler(request, InvalidRequest(summary))
+
+
 def create_app(registry: Registry | None = None) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="OpenModel API", lifespan=lifespan)
@@ -47,6 +56,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(MetricsMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(chat.router)

@@ -95,6 +95,10 @@ async def test_empty_messages_is_422(client: AsyncClient) -> None:
     response = await client.post("/v1/chat/completions", json={**BODY, "messages": []})
 
     assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] is None
+    assert "messages" in error["message"]
 
 
 @respx.mock

@@ -42,6 +42,11 @@ class PromptListUnsupported(ApiError):
         super().__init__("Batched prompts are not supported; send a single prompt.")
 
 
+class InvalidRequest(ApiError):
+    status_code = 422
+    type = "invalid_request_error"
+
+
 class BackendUnavailable(ApiError):
     status_code = 502
     type = "server_error"
