@@ -31,6 +31,16 @@ async def test_not_ready_reports_backend_error(client: AsyncClient) -> None:
 
 
 @respx.mock
+async def test_not_ready_when_backend_times_out(client: AsyncClient) -> None:
+    respx.get(TAGS_URL).mock(side_effect=httpx.ReadTimeout("timed out"))
+
+    response = await client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["backends"][BACKEND_URL].startswith("ReadTimeout")
+
+
+@respx.mock
 async def test_result_is_cached_within_ttl(client: AsyncClient) -> None:
     route = respx.get(TAGS_URL).respond(200, json={"models": []})
 

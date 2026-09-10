@@ -21,7 +21,7 @@ async def _probe(http: httpx.AsyncClient, registry: Registry) -> dict[str, str]:
     results = {}
     for url in sorted(registry.backend_urls()):
         try:
-            response = await http.get(f"{url}/api/tags")
+            response = await http.get(f"{url}/api/tags", timeout=settings.backend_connect_timeout_s)
             results[url] = "ok" if response.status_code == 200 else f"HTTP {response.status_code}"
         except httpx.HTTPError as exc:
             results[url] = f"{type(exc).__name__}: {exc}"
