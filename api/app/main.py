@@ -5,6 +5,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.backends.ollama import OllamaBackend
 from app.config import settings
 from app.errors import ApiError
 from app.logging import RequestIdMiddleware, configure_logging
@@ -22,6 +23,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     async with httpx.AsyncClient(timeout=timeout) as http:
         app.state.http = http
+        registry: Registry = app.state.registry
+        app.state.backends = {
+            url: OllamaBackend(client=http, base_url=url, retries=settings.backend_retries)
+            for url in registry.backend_urls()
+        }
         yield
 
 
