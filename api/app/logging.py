@@ -1,4 +1,5 @@
 import logging
+import time
 from uuid import uuid4
 
 import structlog
@@ -44,6 +45,18 @@ def configure_logging(level: str) -> None:
     root.handlers = [handler]
     root.setLevel(level_no)
 
+    # uvicorn ships its own handlers; drop them so every line lands on the JSON root handler.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers = []
+        uvicorn_logger.propagate = True
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+log = structlog.get_logger()
+
+SILENT_PATHS = frozenset({"/health", "/ready", "/metrics"})
+
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Bind a request id into the structlog context and echo it back."""
@@ -51,8 +64,17 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get(REQUEST_ID_HEADER) or uuid4().hex
         structlog.contextvars.bind_contextvars(request_id=request_id)
+        start = time.perf_counter()
         try:
             response = await call_next(request)
+            if request.url.path not in SILENT_PATHS:
+                log.info(
+                    "request",
+                    method=request.method,
+                    path=request.url.path,
+                    status=response.status_code,
+                    duration_ms=round((time.perf_counter() - start) * 1000, 1),
+                )
         finally:
             structlog.contextvars.clear_contextvars()
         response.headers[REQUEST_ID_HEADER] = request_id
