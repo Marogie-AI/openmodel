@@ -50,6 +50,9 @@ def configure_logging(level: str) -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers = []
         uvicorn_logger.propagate = True
+    # --no-access-log only clears uvicorn's own handlers and propagate, which the loop above
+    # restores; the level is what actually keeps its access lines out, now `request` replaces them.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 

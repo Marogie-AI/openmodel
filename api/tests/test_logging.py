@@ -36,8 +36,10 @@ def test_uvicorn_loggers_are_routed_through_structlog() -> None:
     stream = io.StringIO()
     cast(logging.StreamHandler[Any], logging.getLogger().handlers[0]).setStream(stream)
 
-    logging.getLogger("uvicorn.access").info("x")
+    logging.getLogger("uvicorn.error").info("x")
     structlog.get_logger().info("y")
+
+    assert logging.getLogger("uvicorn.access").level == logging.WARNING
 
     payloads = parse(stream.getvalue())
     assert len(payloads) == 2
