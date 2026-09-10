@@ -100,3 +100,90 @@ async def test_backend_500_becomes_502_envelope(client: AsyncClient) -> None:
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "backend_unavailable"
+
+
+def ndjson(*lines: dict[str, Any]) -> str:
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+async def sse_data(client: AsyncClient, body: dict[str, Any]) -> list[str]:
+    async with client.stream("POST", "/v1/chat/completions", json=body) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["cache-control"] == "no-cache"
+        assert response.headers["x-accel-buffering"] == "no"
+        return [
+            line.removeprefix("data: ")
+            async for line in response.aiter_lines()
+            if line.startswith("data: ")
+        ]
+
+
+@respx.mock
+async def test_stream_emits_role_content_usage_then_done(client: AsyncClient) -> None:
+    respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text=ndjson(
+                {"message": {"content": "hi"}, "done": False},
+                {"message": {"content": " there"}, "done": False},
+                {
+                    "message": {"content": ""},
+                    "done": True,
+                    "done_reason": "stop",
+                    "prompt_eval_count": 7,
+                    "eval_count": 3,
+                },
+            ),
+        )
+    )
+
+    events = await sse_data(client, {**BODY, "stream": True})
+
+    assert events[-1] == "[DONE]"
+    chunks = [json.loads(event) for event in events[:-1]]
+    assert all(chunk["object"] == "chat.completion.chunk" for chunk in chunks)
+    assert all(chunk["id"] == chunks[0]["id"] for chunk in chunks)
+    assert [chunk["choices"][0]["delta"] for chunk in chunks] == [
+        {"role": "assistant", "content": ""},
+        {"content": "hi"},
+        {"content": " there"},
+        {},
+    ]
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+    assert chunks[-1]["usage"] == {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+    assert "usage" not in chunks[0]
+    assert chunks[0]["choices"][0].get("finish_reason") is None
+
+
+@respx.mock
+async def test_stream_request_body_asks_ollama_to_stream(client: AsyncClient) -> None:
+    route = respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(200, text=ndjson({"message": {"content": "x"}, "done": True}))
+    )
+
+    await sse_data(client, {**BODY, "stream": True, "max_tokens": 8})
+
+    assert json.loads(route.calls[0].request.content) == {
+        "model": "qwen2.5:0.5b",
+        "messages": [{"role": "user", "content": "yo"}],
+        "stream": True,
+        "options": {"num_predict": 8},
+    }
+
+
+@respx.mock
+async def test_stream_backend_failure_emits_error_event_then_done(client: AsyncClient) -> None:
+    respx.post(CHAT_URL).mock(return_value=httpx.Response(500))
+
+    events = await sse_data(client, {**BODY, "stream": True})
+
+    assert json.loads(events[0])["choices"][0]["delta"] == {"role": "assistant", "content": ""}
+    assert json.loads(events[1]) == {
+        "error": {
+            "message": "Backend returned HTTP 500.",
+            "type": "server_error",
+            "code": "backend_unavailable",
+        }
+    }
+    assert events[-1] == "[DONE]"

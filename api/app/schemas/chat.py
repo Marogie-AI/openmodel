@@ -49,3 +49,18 @@ class ChatCompletion(BaseModel):
     model: str
     choices: list[ChatChoice]
     usage: UsageOut
+
+
+class ChunkChoice(BaseModel):
+    index: int = 0
+    delta: dict[str, str]
+    finish_reason: str | None = None
+
+
+class ChatCompletionChunk(BaseModel):
+    id: str
+    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: list[ChunkChoice]
+    usage: UsageOut | None = None
