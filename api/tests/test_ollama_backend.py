@@ -192,6 +192,26 @@ async def test_stream_upstream_500_raises_backend_unavailable(backend: OllamaBac
 
 
 @respx.mock
+async def test_error_body_is_included_in_the_message(backend: OllamaBackend) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(
+        return_value=httpx.Response(404, json={"error": "model 'm' not found"})
+    )
+
+    with pytest.raises(BackendUnavailable, match="Backend returned HTTP 404: model 'm' not found"):
+        await backend.chat("m", [], {})
+
+
+@respx.mock
+async def test_stream_error_body_is_included_in_the_message(backend: OllamaBackend) -> None:
+    respx.post(f"{BACKEND_URL}/api/chat").mock(
+        return_value=httpx.Response(404, json={"error": "model 'm' not found"})
+    )
+
+    with pytest.raises(BackendUnavailable, match="404: model"):
+        await collect(backend.chat_stream("m", [], {}))
+
+
+@respx.mock
 async def test_connect_error_twice_then_success(backend: OllamaBackend) -> None:
     route = respx.post(f"{BACKEND_URL}/api/chat").mock(
         side_effect=[

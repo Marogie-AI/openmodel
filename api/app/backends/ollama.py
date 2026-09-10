@@ -86,7 +86,7 @@ class OllamaBackend:
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         response = await self._send(lambda: self._client.post(self._base_url + path, json=body))
-        self._check(response.status_code)
+        await self._check(response)
         try:
             data: dict[str, Any] = response.json()
         except json.JSONDecodeError as exc:
@@ -103,7 +103,7 @@ class OllamaBackend:
                     self._client.stream("POST", self._base_url + path, json=body)
                 )
             )
-            self._check(response.status_code)
+            await self._check(response)
             try:
                 async for line in response.aiter_lines():
                     if not line.strip():
@@ -139,6 +139,12 @@ class OllamaBackend:
             except httpx.HTTPError as exc:
                 raise BackendUnavailable(f"Backend request failed: {exc}") from exc
 
-    def _check(self, status_code: int) -> None:
-        if status_code >= 400:
-            raise BackendUnavailable(f"Backend returned HTTP {status_code}.")
+    async def _check(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        message = f"Backend returned HTTP {response.status_code}."
+        with contextlib.suppress(httpx.HTTPError, ValueError):
+            body = json.loads(await response.aread())
+            if isinstance(body, dict) and "error" in body:
+                message = f"Backend returned HTTP {response.status_code}: {body['error']}"
+        raise BackendUnavailable(message)
