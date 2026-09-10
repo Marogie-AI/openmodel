@@ -10,7 +10,7 @@ from app.config import settings
 from app.errors import ApiError
 from app.logging import RequestIdMiddleware, configure_logging
 from app.router import Registry
-from app.routes import health, models
+from app.routes import chat, health, models
 
 
 @asynccontextmanager
@@ -47,6 +47,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_exception_handler(ApiError, api_error_handler)
     app.include_router(health.router)
     app.include_router(models.router)
+    app.include_router(chat.router)
     return app
 
 
