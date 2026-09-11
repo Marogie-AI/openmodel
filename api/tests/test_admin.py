@@ -31,9 +31,18 @@ async def make_user(client: AsyncClient, org_id: str, email: str = "a@example.co
     return user_id
 
 
-@pytest.mark.parametrize("headers", [{}, {"X-Admin-Token": "wrong"}])
+# The third case is a non-ASCII token: Starlette decodes headers latin-1, and comparing that
+# against the token as `str` would raise inside hmac.compare_digest.
+BAD_TOKENS: list[dict[str, str | bytes]] = [
+    {},
+    {"X-Admin-Token": "wrong"},
+    {"X-Admin-Token": "tok\u00e9n".encode("latin-1")},
+]
+
+
+@pytest.mark.parametrize("headers", BAD_TOKENS)
 async def test_admin_requires_the_admin_token(
-    db_client: AsyncClient, headers: dict[str, str]
+    db_client: AsyncClient, headers: dict[str, str | bytes]
 ) -> None:
     response = await db_client.get("/admin/plans", headers=headers)
 
@@ -159,3 +168,17 @@ async def test_create_key_rejects_an_unknown_user(db_client: AsyncClient) -> Non
     )
 
     assert response.status_code == 404
+
+
+async def test_overlong_plan_input_is_rejected_before_it_reaches_the_database(
+    db_client: AsyncClient,
+) -> None:
+    body = {"requests_per_minute": 1, "max_concurrency": 1, "models": ["m"]}
+
+    long_code = await db_client.put(f"/admin/plans/{'x' * 33}", json=body, headers=ADMIN_HEADERS)
+    assert long_code.status_code == 422
+
+    long_model = await db_client.put(
+        "/admin/plans/free", json={**body, "models": ["m" * 129]}, headers=ADMIN_HEADERS
+    )
+    assert long_model.status_code == 422
