@@ -5,6 +5,7 @@ resources:
   - namespaces.yaml
   - data/postgres.yaml
   - data/redis.yaml
+  - inference/ollama.yaml
 
 # Stable ConfigMap names so the StatefulSet volume refs do not need editing.
 # Trade-off: no automatic rollout on config change — after editing these files

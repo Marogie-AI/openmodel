@@ -1,0 +1,198 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: openmodel
+spec:
+  # RWO is all kind's local-path provisioner offers, hence Recreate below.
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: openmodel
+spec:
+  selector:
+    app.kubernetes.io/name: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: openmodel
+spec:
+  replicas: 1
+  # Recreate: the RWO model volume cannot be attached to an old and a new pod
+  # at the same time, so a rolling update would deadlock.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      # The upstream image runs as root and writes to /root/.ollama; PSA
+      # `restricted` forbids that. Run as uid 1000 with HOME and OLLAMA_MODELS
+      # relocated onto writable volumes instead (see env + volumeMounts).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.11.4
+          ports:
+            - name: http
+              containerPort: 11434
+          env:
+            - name: HOME
+              value: /home/ollama
+            - name: OLLAMA_MODELS
+              value: /models
+            - name: OLLAMA_HOST
+              value: 0.0.0.0:11434
+            # Keep weights resident between requests: reloading a model from
+            # the local-path volume on every call dominates small-model latency.
+            - name: OLLAMA_KEEP_ALIVE
+              value: 24h
+            - name: OLLAMA_NUM_PARALLEL
+              value: "2"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: home
+              mountPath: /home/ollama
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            # 30 x 5s = 150s of grace: the first boot enumerates the model dir
+            # and can be slow on a cold local-path volume.
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              # 2.5Gi of the dev node's 8Gi: enough for qwen2.5:0.5b plus the
+              # embedding model with headroom, without starving the data tier.
+              memory: 2.5Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-pull
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama-pull
+    app.kubernetes.io/component: pull
+    app.kubernetes.io/part-of: openmodel
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama-pull
+        app.kubernetes.io/component: pull
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pull
+          image: ollama/ollama:0.11.4
+          # OLLAMA_HOST as a URL makes the CLI a client of the Deployment, so
+          # the model volume is only ever written by the server process. The
+          # Job therefore does not mount the PVC.
+          env:
+            - name: HOME
+              value: /home/ollama
+            - name: OLLAMA_HOST
+              value: http://ollama.openmodel-inference:11434
+          command: ["/bin/sh", "-c", "ollama pull qwen2.5:0.5b && ollama pull nomic-embed-text"]
+          volumeMounts:
+            - name: home
+              mountPath: /home/ollama
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+# Kustomize has no hooks, so this Job is a plain resource. Re-applying a
+# completed Job is a no-op (the spec is unchanged and immutable). Once the
+# TTL reaps it, the next `apply` recreates and re-runs it — which is safe and
+# cheap: `ollama pull` is a no-op when the weights are already on the PVC.
