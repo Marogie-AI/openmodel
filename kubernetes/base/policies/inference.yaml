@@ -1,0 +1,96 @@
+# openmodel-inference: Ollama serves the api and originates nothing but DNS —
+# it must not reach the internet at runtime. Pulling models is the ollama-pull
+# Job's business, and only that Job gets an egress hole to the registry.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: openmodel-inference
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: openmodel-inference
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # Any pod -> CoreDNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ollama-ingress
+  namespace: openmodel-inference
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # api serving pods -> Ollama.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openmodel-api
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+              app.kubernetes.io/component: api
+        # ollama-pull Job (same namespace) -> Ollama, to drive /api/pull.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ollama-pull
+      ports:
+        - port: 11434
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pull-egress
+  namespace: openmodel-inference
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ollama-pull
+      app.kubernetes.io/component: pull
+  policyTypes: [Egress]
+  egress:
+    # ollama-pull -> the Ollama it drives.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ollama
+      ports:
+        - port: 11434
+          protocol: TCP
+    # ollama-pull -> registry.ollama.ai over TLS. Everything inside the cluster
+    # (pods, Services, nodes) is carved out so this stays an internet-only hole.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 192.168.0.0/16
+              - 10.96.0.0/16
+              - 172.22.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

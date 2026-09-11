@@ -1,0 +1,122 @@
+# Edge policies. Two namespaces are involved:
+#
+#   openmodel-edge        holds only Gateway/HTTPRoute CRs (no pods) — locked
+#                         down anyway so a future pod there starts closed.
+#   envoy-gateway-system  holds the Envoy data-plane pods AND the Envoy Gateway
+#                         controller, which we do not own. So the default-deny
+#                         here selects ONLY the data-plane pods of our Gateway
+#                         (gateway.envoyproxy.io/owning-gateway-name=openmodel);
+#                         the controller's traffic (API server, xDS) is left
+#                         untouched.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: openmodel-edge
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: openmodel-edge
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # Any pod -> CoreDNS, so name resolution survives the default-deny.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-envoy-proxy
+  namespace: envoy-gateway-system
+spec:
+  # Scoped to our Gateway's proxy pods only — never the whole namespace.
+  podSelector:
+    matchLabels:
+      gateway.envoyproxy.io/owning-gateway-name: openmodel
+      gateway.envoyproxy.io/owning-gateway-namespace: openmodel-edge
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-envoy-proxy
+  namespace: envoy-gateway-system
+spec:
+  podSelector:
+    matchLabels:
+      gateway.envoyproxy.io/owning-gateway-name: openmodel
+      gateway.envoyproxy.io/owning-gateway-namespace: openmodel-edge
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Public listeners: browser/curl -> Envoy. Source is unconstrained because
+    # host traffic arrives NodePort-DNATed with the node IP as the source.
+    - ports:
+        - port: 10080
+          protocol: TCP
+        - port: 10443
+          protocol: TCP
+    # Envoy Gateway controller -> proxy metrics (19001) and readiness (19003).
+    # The kubelet's own probe to 19003 is host-network traffic, which Calico
+    # does not subject to pod policy — verified: the proxy stays Ready without
+    # a node-CIDR allow here.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - port: 19001
+          protocol: TCP
+        - port: 19003
+          protocol: TCP
+  egress:
+    # Proxy -> xDS config stream on the Envoy Gateway controller.
+    - to:
+        - podSelector:
+            matchLabels:
+              control-plane: envoy-gateway
+      ports:
+        - port: 18000
+          protocol: TCP
+    # Proxy -> the API backend it routes to.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openmodel-api
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Proxy -> CoreDNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
