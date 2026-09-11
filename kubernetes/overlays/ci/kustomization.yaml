@@ -1,0 +1,38 @@
+# CI overlay: the same base, but pulling the image CI pushed to GHCR instead of
+# the locally built openmodel-api:dev that `kind load` side-loads in dev.
+#
+# Not applied in phase 3. `kubectl kustomize` on this directory fails until the
+# secrets/*.env files exist — see README.md in this directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  # The base pins openmodel-api:dev on the Deployment, its initContainer and
+  # the migrate Job; this rewrites all three.
+  - name: openmodel-api
+    newName: ghcr.io/pumarogie/openmodel-api
+    newTag: latest
+
+# Stable Secret names: workloads reference them by name in secretKeyRef/envFrom.
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: postgres-credentials
+    namespace: openmodel-data
+    envs:
+      - secrets/postgres.env
+  - name: api-secrets
+    namespace: openmodel-api
+    envs:
+      - secrets/api.env
+  - name: api-migrate-secrets
+    namespace: openmodel-api
+    envs:
+      - secrets/api-migrate.env
+
+patches:
+  - path: pull-secret.yaml
