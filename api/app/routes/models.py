@@ -1,17 +1,21 @@
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from app.auth.principal import Principal, require_principal
 
 router = APIRouter()
 
 
 @router.get("/v1/models")
-async def list_models(request: Request) -> dict[str, Any]:
+async def list_models(
+    request: Request, principal: Annotated[Principal, Depends(require_principal)]
+) -> dict[str, Any]:
     registry = request.app.state.registry
+    names = sorted({model.name for model in registry.list()} & principal.models)
     return {
         "object": "list",
         "data": [
-            {"id": model.name, "object": "model", "created": 0, "owned_by": "openmodel"}
-            for model in registry.list()
+            {"id": name, "object": "model", "created": 0, "owned_by": "openmodel"} for name in names
         ],
     }

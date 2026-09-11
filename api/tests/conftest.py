@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import redis.asyncio as aioredis
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alembic import command
+from app.auth.principal import Principal, require_principal
 from app.config import settings
 from app.db.seed import seed_plans
 from app.db.session import make_engine, make_sessionmaker
@@ -28,9 +30,25 @@ TEST_REGISTRY = Registry(
 )
 
 
-async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
-    """Client for an app built on `registry`, with the lifespan (app.state.http) entered."""
+TEST_PRINCIPAL = Principal(
+    api_key_id=UUID("00000000-0000-0000-0000-0000000000a1"),
+    user_id=UUID("00000000-0000-0000-0000-0000000000b1"),
+    organization_id=UUID("00000000-0000-0000-0000-0000000000c1"),
+    plan_code="free",
+    requests_per_minute=60,
+    max_concurrency=2,
+    models=frozenset({"qwen2.5:0.5b", "nomic-embed-text"}),
+)
+
+
+async def make_client(registry: Registry, *, stub_auth: bool = True) -> AsyncIterator[AsyncClient]:
+    """Client for an app built on `registry`, with the lifespan (app.state.http) entered.
+
+    `stub_auth` swaps the real key lookup for TEST_PRINCIPAL, so route tests need no database.
+    """
     app = create_app(registry)
+    if stub_auth:
+        app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
@@ -50,8 +68,31 @@ ADMIN_HEADERS = {"X-Admin-Token": settings.admin_token}
 @pytest.fixture
 async def db_client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """Client on the real postgres/redis, with the tables truncated and the plans seeded."""
-    async for c in make_client(TEST_REGISTRY):
+    async for c in make_client(TEST_REGISTRY, stub_auth=False):
         yield c
+
+
+@pytest.fixture
+async def principal_key(db_client: AsyncClient) -> str:
+    """A raw API key for a fresh user of a fresh organization on the `free` plan."""
+    org = await db_client.post(
+        "/admin/orgs", json={"name": "acme", "plan_code": "free"}, headers=ADMIN_HEADERS
+    )
+    user = await db_client.post(
+        "/admin/users",
+        json={"organization_id": org.json()["id"], "email": "principal@example.com"},
+        headers=ADMIN_HEADERS,
+    )
+    key = await db_client.post(f"/admin/users/{user.json()['id']}/keys", headers=ADMIN_HEADERS)
+    raw: str = key.json()["key"]
+    return raw
+
+
+@pytest.fixture
+async def auth_client(db_client: AsyncClient, principal_key: str) -> AsyncClient:
+    """`db_client` with the bearer header of `principal_key` preset."""
+    db_client.headers["Authorization"] = f"Bearer {principal_key}"
+    return db_client
 
 
 async def db_available() -> bool:

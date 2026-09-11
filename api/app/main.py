@@ -3,10 +3,11 @@ from contextlib import asynccontextmanager
 
 import httpx
 import redis.asyncio as aioredis
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.auth.principal import require_principal
 from app.backends.ollama import OllamaBackend
 from app.config import settings
 from app.db.session import make_engine, make_sessionmaker
@@ -71,10 +72,11 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(admin.router)
     app.include_router(health.router)
-    app.include_router(models.router)
-    app.include_router(chat.router)
-    app.include_router(completions.router)
-    app.include_router(embeddings.router)
+    authed = [Depends(require_principal)]
+    app.include_router(models.router, dependencies=authed)
+    app.include_router(chat.router, dependencies=authed)
+    app.include_router(completions.router, dependencies=authed)
+    app.include_router(embeddings.router, dependencies=authed)
     app.include_router(metrics.router)
     return app
 

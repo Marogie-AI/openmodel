@@ -1,0 +1,114 @@
+"""Bearer API-key auth: resolve a raw key to a Principal, cached in Redis."""
+
+import asyncio
+import hashlib
+import hmac
+import json
+from dataclasses import dataclass
+from typing import Annotated, Any
+from uuid import UUID
+
+from fastapi import Depends, Header, Request
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.keys import parse_key, verify_secret
+from app.config import settings
+from app.db.models import ApiKey, PlanModel
+from app.db.session import get_session
+from app.errors import Unauthorized
+
+# One message for every failure mode: an unknown key_id must not be distinguishable from a bad
+# secret.
+INVALID_KEY = "Missing or invalid API key"
+
+
+@dataclass(frozen=True)
+class Principal:
+    api_key_id: UUID
+    user_id: UUID
+    organization_id: UUID
+    plan_code: str
+    requests_per_minute: int
+    max_concurrency: int
+    models: frozenset[str]
+
+
+def cache_key(key_id: str) -> str:
+    return f"auth:{key_id}"
+
+
+def _fast_hash(secret: str) -> str:
+    """Cheap peppered digest of the secret. Only ever stored in Redis, under the cache TTL."""
+    return hashlib.sha256((secret + settings.key_pepper).encode()).hexdigest()
+
+
+async def drop_cached(redis: Redis, key_id: str) -> None:
+    await redis.delete(cache_key(key_id))
+
+
+def _principal(cached: dict[str, Any]) -> Principal:
+    return Principal(
+        api_key_id=UUID(cached["api_key_id"]),
+        user_id=UUID(cached["user_id"]),
+        organization_id=UUID(cached["organization_id"]),
+        plan_code=cached["plan_code"],
+        requests_per_minute=cached["requests_per_minute"],
+        max_concurrency=cached["max_concurrency"],
+        models=frozenset(cached["models"]),
+    )
+
+
+async def _load(key_id: str, secret: str, session: AsyncSession) -> dict[str, Any]:
+    key = await session.scalar(select(ApiKey).where(ApiKey.key_id == key_id))
+    if key is None or key.revoked_at is not None:
+        raise Unauthorized(INVALID_KEY)
+    # argon2 costs ~20ms of CPU, so keep it off the event loop.
+    if not await asyncio.to_thread(verify_secret, key.secret_hash, secret, settings.key_pepper):
+        raise Unauthorized(INVALID_KEY)
+
+    org = key.user.organization
+    models = await session.scalars(
+        select(PlanModel.model_name).where(PlanModel.plan_code == org.plan_code)
+    )
+    return {
+        "api_key_id": str(key.id),
+        "user_id": str(key.user_id),
+        "organization_id": str(org.id),
+        "plan_code": org.plan_code,
+        "requests_per_minute": org.plan.requests_per_minute,
+        "max_concurrency": org.plan.max_concurrency,
+        "models": sorted(models.all()),
+        "fast_hash": _fast_hash(secret),
+    }
+
+
+async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -> Principal:
+    parsed = parse_key(raw_key)
+    if parsed is None:
+        raise Unauthorized(INVALID_KEY)
+    key_id, secret = parsed
+
+    raw_cached = await redis.get(cache_key(key_id))
+    if raw_cached is not None:
+        cached: dict[str, Any] = json.loads(raw_cached)
+        # No DB fallback on a mismatch: the cache entry is authoritative for its TTL.
+        if not hmac.compare_digest(cached["fast_hash"], _fast_hash(secret)):
+            raise Unauthorized(INVALID_KEY)
+        return _principal(cached)
+
+    fresh = await _load(key_id, secret, session)
+    await redis.set(cache_key(key_id), json.dumps(fresh), ex=settings.auth_cache_ttl_s)
+    return _principal(fresh)
+
+
+async def require_principal(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> Principal:
+    scheme, _, raw_key = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not raw_key:
+        raise Unauthorized(INVALID_KEY)
+    return await resolve_principal(raw_key.strip(), session, request.app.state.redis)
