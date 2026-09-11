@@ -19,12 +19,16 @@ ORIGIN = BASE_URL.removesuffix("/v1")
 ADMIN_HEADERS = {
     "X-Admin-Token": os.environ.get("OPENMODEL_ADMIN_TOKEN", "dev-admin-token-change-me")
 }
+# The cluster serves a self-signed cert for api.openmodel.test. Set
+# OPENMODEL_INSECURE_TLS=1 to trust it; unset, verification stays on.
+VERIFY = os.environ.get("OPENMODEL_INSECURE_TLS") != "1"
+HTTP = httpx.Client(verify=VERIFY)
 
 CHAT_MODEL = "qwen2.5:0.5b"
 
 
 def _created(path: str, body: dict[str, object]) -> dict[str, object]:
-    response = httpx.post(f"{ORIGIN}{path}", headers=ADMIN_HEADERS, json=body, timeout=30)
+    response = HTTP.post(f"{ORIGIN}{path}", headers=ADMIN_HEADERS, json=body, timeout=30)
     response.raise_for_status()
     data: dict[str, object] = response.json()
     return data
@@ -38,7 +42,7 @@ def api_key() -> str:
     user = _created(
         "/admin/users", {"organization_id": org["id"], "email": f"e2e-{tag}@example.test"}
     )
-    key = httpx.post(f"{ORIGIN}/admin/users/{user['id']}/keys", headers=ADMIN_HEADERS, timeout=30)
+    key = HTTP.post(f"{ORIGIN}/admin/users/{user['id']}/keys", headers=ADMIN_HEADERS, timeout=30)
     key.raise_for_status()
     raw: str = key.json()["key"]
     return raw
@@ -46,11 +50,13 @@ def api_key() -> str:
 
 @pytest.fixture(scope="module")
 def client(api_key: str) -> OpenAI:
-    return OpenAI(base_url=BASE_URL, api_key=api_key)
+    if VERIFY:
+        return OpenAI(base_url=BASE_URL, api_key=api_key)
+    return OpenAI(base_url=BASE_URL, api_key=api_key, http_client=httpx.Client(verify=False))
 
 
 def test_a_request_without_a_key_is_rejected() -> None:
-    response = httpx.get(f"{BASE_URL}/models", timeout=30)
+    response = HTTP.get(f"{BASE_URL}/models", timeout=30)
 
     assert response.status_code == 401
     assert response.json() == {
@@ -109,7 +115,7 @@ def test_embedding(client: OpenAI) -> None:
 
 
 def test_a_served_request_carries_the_plan_rate_limit(api_key: str) -> None:
-    response = httpx.post(
+    response = HTTP.post(
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json={
@@ -129,7 +135,7 @@ def test_usage_counts_the_calls(api_key: str) -> None:
     # Metering is a background task, so the last call's row can land after its response.
     deadline = time.monotonic() + 2
     while True:
-        usage = httpx.get(f"{ORIGIN}/api/usage", headers=headers, timeout=30).json()
+        usage = HTTP.get(f"{ORIGIN}/api/usage", headers=headers, timeout=30).json()
         if usage["requests"] >= 4 or time.monotonic() > deadline:
             break
         time.sleep(0.1)
