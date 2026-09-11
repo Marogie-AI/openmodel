@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Stable Secret names: workloads reference them by name in secretKeyRef/envFrom.
+generatorOptions:
+  disableNameSuffixHash: true
+
+# secrets/*.env is git-ignored; run scripts/secrets.sh to create it.
+secretGenerator:
+  - name: postgres-credentials
+    namespace: openmodel-data
+    envs:
+      - secrets/postgres.env
+  - name: api-secrets
+    namespace: openmodel-api
+    envs:
+      - secrets/api.env

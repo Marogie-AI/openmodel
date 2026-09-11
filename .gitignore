@@ -8,3 +8,6 @@ __pycache__/
 secrets/
 *.egg-info/
 kubernetes/overlays/dev/secrets/*.env
+!kubernetes/overlays/dev/secrets/
+kubernetes/overlays/dev/secrets/*
+!kubernetes/overlays/dev/secrets/.gitkeep
