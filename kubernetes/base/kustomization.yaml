@@ -37,3 +37,13 @@ configMapGenerator:
     namespace: openmodel-api
     files:
       - api/models.yaml
+  # The Grafana sidecar loads any ConfigMap labelled grafana_dashboard="1", in
+  # any namespace. The dashboard JSON lives here rather than under monitoring/
+  # because kustomize cannot read files outside its root.
+  - name: openmodel-dashboard
+    namespace: openmodel-monitoring
+    options:
+      labels:
+        grafana_dashboard: "1"
+    files:
+      - monitoring/openmodel-dashboard.json
