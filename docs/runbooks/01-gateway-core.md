@@ -2,6 +2,10 @@
 
 The OpenAI-compatible gateway in front of Ollama, running under Docker Compose.
 
+From Phase 2 on, every `/v1` request needs `Authorization: Bearer <key>`, and
+the curl commands below return 401 without one. Make a key first —
+[runbook 02](02-platform-layer.md) has the three admin calls that mint one.
+
 ## Run it
 
 From the repo root:
