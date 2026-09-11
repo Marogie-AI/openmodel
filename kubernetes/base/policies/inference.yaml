@@ -1,6 +1,12 @@
-# openmodel-inference: Ollama serves the api and originates nothing but DNS —
-# it must not reach the internet at runtime. Pulling models is the ollama-pull
-# Job's business, and only that Job gets an egress hole to the registry.
+# openmodel-inference: Ollama serves the api. The one egress hole to the
+# internet is for pulling models — and it has to be on the *server*, not on the
+# ollama-pull Job: `ollama pull` with OLLAMA_HOST set to a URL is only a client
+# call, and the Deployment is what downloads the weights. Scoping the hole to
+# the Job instead leaves a cold cluster unable to pull anything (the Job's
+# /api/pull returns 200 while the server logs a dial timeout to
+# registry.ollama.ai). NetworkPolicy has no notion of "only during a pull", so
+# this is open at runtime; narrowing it needs an egress proxy or Calico's
+# domain-name policy.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -82,7 +88,19 @@ spec:
       ports:
         - port: 11434
           protocol: TCP
-    # ollama-pull -> registry.ollama.ai over TLS. Everything inside the cluster
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ollama-registry-egress
+  namespace: openmodel-inference
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  policyTypes: [Egress]
+  egress:
+    # ollama -> registry.ollama.ai over TLS. Everything inside the cluster
     # (pods, Services, nodes) is carved out so this stays an internet-only hole.
     - to:
         - ipBlock:
