@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.keys import generate_key, hash_secret
+from app.auth.keys import generate_key, hash_secret_async
 from app.auth.principal import Principal, drop_cached, require_principal
 from app.config import settings
 from app.db.models import ApiKey
@@ -29,7 +29,7 @@ async def create_key(principal: Caller, session: Session) -> KeyOut:
     key = ApiKey(
         user_id=principal.user_id,
         key_id=generated.key_id,
-        secret_hash=hash_secret(generated.secret, settings.key_pepper),
+        secret_hash=await hash_secret_async(generated.secret, settings.key_pepper),
         prefix=generated.prefix,
     )
     session.add(key)

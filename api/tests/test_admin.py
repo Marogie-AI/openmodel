@@ -3,7 +3,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.keys import parse_key, verify_secret
+from app.auth.keys import hash_secret, parse_key, verify_secret
 from app.config import settings
 from app.db.models import ApiKey
 from tests.conftest import ADMIN_HEADERS
@@ -182,3 +182,15 @@ async def test_overlong_plan_input_is_rejected_before_it_reaches_the_database(
         "/admin/plans/free", json={**body, "models": ["m" * 129]}, headers=ADMIN_HEADERS
     )
     assert long_model.status_code == 422
+
+
+async def test_admin_create_key_hashes_off_the_event_loop(
+    db_client: AsyncClient, record_to_thread: list[object]
+) -> None:
+    org_id = await make_org(db_client)
+    user_id = await make_user(db_client, org_id)
+
+    response = await db_client.post(f"/admin/users/{user_id}/keys", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 201
+    assert hash_secret in record_to_thread

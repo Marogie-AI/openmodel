@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.admin import require_admin
-from app.auth.keys import generate_key, hash_secret
+from app.auth.keys import generate_key, hash_secret_async
 from app.config import settings
 from app.db.models import ApiKey, AppUser, Organization, Plan, PlanModel
 from app.db.session import get_session
@@ -126,7 +126,7 @@ async def create_key(user_id: UUID, session: Session) -> KeyOut:
     key = ApiKey(
         user_id=user_id,
         key_id=generated.key_id,
-        secret_hash=hash_secret(generated.secret, settings.key_pepper),
+        secret_hash=await hash_secret_async(generated.secret, settings.key_pepper),
         prefix=generated.prefix,
     )
     session.add(key)

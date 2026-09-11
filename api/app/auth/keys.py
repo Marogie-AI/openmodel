@@ -1,5 +1,6 @@
 """API key material: generation, parsing, and peppered argon2id hashing of the secret."""
 
+import asyncio
 import re
 import secrets
 from dataclasses import dataclass
@@ -40,6 +41,11 @@ def parse_key(raw: str) -> tuple[str, str] | None:
 
 def hash_secret(secret: str, pepper: str) -> str:
     return _hasher.hash(secret + pepper)
+
+
+async def hash_secret_async(secret: str, pepper: str) -> str:
+    """argon2 burns ~20ms of CPU and 19MB per call: keep it off the event loop."""
+    return await asyncio.to_thread(hash_secret, secret, pepper)
 
 
 def verify_secret(secret_hash: str, secret: str, pepper: str) -> bool:

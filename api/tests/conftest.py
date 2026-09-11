@@ -1,11 +1,13 @@
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
 import redis.asyncio as aioredis
 from alembic.config import Config
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,14 +43,13 @@ TEST_PRINCIPAL = Principal(
 )
 
 
-async def make_client(registry: Registry, *, stub_auth: bool = True) -> AsyncIterator[AsyncClient]:
+async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     """Client for an app built on `registry`, with the lifespan (app.state.http) entered.
 
-    `stub_auth` swaps the real key lookup for TEST_PRINCIPAL, so route tests need no database.
+    Auth is stubbed out to TEST_PRINCIPAL, so these route tests need no database.
     """
     app = create_app(registry)
-    if stub_auth:
-        app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
+    app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
@@ -66,9 +67,21 @@ ADMIN_HEADERS = {"X-Admin-Token": settings.admin_token}
 
 
 @pytest.fixture
-async def db_client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
-    """Client on the real postgres/redis, with the tables truncated and the plans seeded."""
-    async for c in make_client(TEST_REGISTRY, stub_auth=False):
+async def db_app(session: AsyncSession) -> AsyncIterator[FastAPI]:
+    """App on the real postgres/redis and the real auth, with lifespan entered."""
+    app = create_app(TEST_REGISTRY)
+    async with app.router.lifespan_context(app):
+        yield app
+
+
+def client_for(app: FastAPI, headers: dict[str, str] | None = None) -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers)
+
+
+@pytest.fixture
+async def db_client(db_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    """Unauthenticated client on the real postgres/redis, tables truncated, plans seeded."""
+    async with client_for(db_app) as c:
         yield c
 
 
@@ -89,10 +102,10 @@ async def principal_key(db_client: AsyncClient) -> str:
 
 
 @pytest.fixture
-async def auth_client(db_client: AsyncClient, principal_key: str) -> AsyncClient:
-    """`db_client` with the bearer header of `principal_key` preset."""
-    db_client.headers["Authorization"] = f"Bearer {principal_key}"
-    return db_client
+async def auth_client(db_app: FastAPI, principal_key: str) -> AsyncIterator[AsyncClient]:
+    """A second client on the same app, carrying the bearer header of `principal_key`."""
+    async with client_for(db_app, {"Authorization": f"Bearer {principal_key}"}) as c:
+        yield c
 
 
 async def db_available() -> bool:
@@ -174,3 +187,17 @@ async def redis_client() -> AsyncIterator[aioredis.Redis]:
         yield client
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+def record_to_thread(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record the callables handed to asyncio.to_thread, still running each one."""
+    calls: list[object] = []
+    original = asyncio.to_thread
+
+    async def recording(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        calls.append(func)
+        return await original(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", recording)
+    return calls
