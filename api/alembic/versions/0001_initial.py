@@ -73,7 +73,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("key_id", sa.String(length=64), nullable=False),
         sa.Column("secret_hash", sa.String(length=256), nullable=False),
-        sa.Column("prefix", sa.String(length=16), nullable=False),
+        sa.Column("prefix", sa.String(length=32), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -90,7 +90,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "request",
-        sa.Column("id", sa.Integer(), sa.Identity(always=False), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("api_key_id", sa.Uuid(), nullable=False),
         sa.Column("model_name", sa.String(length=128), nullable=False),
         sa.Column("endpoint", sa.String(length=64), nullable=False),
