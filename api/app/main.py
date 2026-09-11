@@ -2,12 +2,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.backends.ollama import OllamaBackend
 from app.config import settings
+from app.db.session import make_engine, make_sessionmaker
 from app.errors import ApiError, InvalidRequest, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
@@ -23,14 +25,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         write=10,
         pool=10,
     )
+    engine = make_engine(settings.database_url)
+    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
     async with httpx.AsyncClient(timeout=timeout) as http:
         app.state.http = http
+        app.state.engine = engine
+        app.state.sessionmaker = make_sessionmaker(engine)
+        app.state.redis = redis_client
         registry: Registry = app.state.registry
         app.state.backends = {
             url: OllamaBackend(client=http, base_url=url, retries=settings.backend_retries)
             for url in registry.backend_urls()
         }
-        yield
+        try:
+            yield
+        finally:
+            await redis_client.aclose()
+            await engine.dispose()
 
 
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
