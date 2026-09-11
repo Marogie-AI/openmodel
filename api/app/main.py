@@ -106,6 +106,12 @@ def fail_closed(error: Callable[[], ServiceUnavailable], event: str) -> Handler:
     return handler
 
 
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last resort: a bug still leaves the client an OpenAI-shaped error, never a bare 500."""
+    log.error("unhandled_exception", exc_info=exc)
+    return await api_error_handler(request, ApiError("Internal server error"))
+
+
 def create_app(registry: Registry | None = None) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="OpenModel API", lifespan=lifespan)
@@ -119,6 +125,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     db_down = fail_closed(DatabaseUnavailable, "postgres_unavailable")
     for db_error in (OperationalError, InterfaceError):
         app.add_exception_handler(db_error, db_down)
+    app.add_exception_handler(Exception, unhandled_error_handler)
     app.include_router(admin.router)
     app.include_router(health.router)
     authed = [Depends(require_principal)]

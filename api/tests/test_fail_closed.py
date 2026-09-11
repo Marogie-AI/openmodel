@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy.exc import OperationalError
 
@@ -87,3 +87,20 @@ async def test_uncached_key_fails_closed_when_postgres_is_down(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "database_unavailable"
+
+
+async def test_an_unhandled_exception_still_renders_the_envelope() -> None:
+    app = create_app(TEST_REGISTRY)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/boom")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"message": "Internal server error", "type": "server_error", "code": None}
+    }
