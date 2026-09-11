@@ -44,6 +44,16 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield c
 
 
+ADMIN_HEADERS = {"X-Admin-Token": settings.admin_token}
+
+
+@pytest.fixture
+async def db_client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """Client on the real postgres/redis, with the tables truncated and the plans seeded."""
+    async for c in make_client(TEST_REGISTRY):
+        yield c
+
+
 async def db_available() -> bool:
     """True when the compose postgres accepts a connection from the app role."""
     engine = make_engine(settings.database_url)

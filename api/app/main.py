@@ -14,7 +14,7 @@ from app.errors import ApiError, InvalidRequest, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
 from app.router import Registry
-from app.routes import chat, completions, embeddings, health, metrics, models
+from app.routes import admin, chat, completions, embeddings, health, metrics, models
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=envelope(exc),
+        headers={"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None,
     )
 
 
@@ -68,6 +69,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_middleware(MetricsMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
+    app.include_router(admin.router)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(chat.router)

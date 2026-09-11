@@ -57,3 +57,27 @@ class BackendTimeout(ApiError):
     status_code = 504
     type = "server_error"
     code = "backend_timeout"
+
+
+class Unauthorized(ApiError):
+    status_code = 401
+    type = "invalid_request_error"
+    code = "invalid_api_key"
+
+
+class Forbidden(ApiError):
+    status_code = 403
+    type = "invalid_request_error"
+    code = "forbidden"
+
+
+class NotFound(ApiError):
+    status_code = 404
+    type = "invalid_request_error"
+    code = "not_found"
+
+
+class Conflict(ApiError):
+    status_code = 409
+    type = "invalid_request_error"
+    code = "conflict"
