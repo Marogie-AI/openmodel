@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Any
 
@@ -28,19 +29,36 @@ async def _probe(http: httpx.AsyncClient, registry: Registry) -> dict[str, str]:
     return results
 
 
+async def _ping_redis(redis: Any) -> str | None:
+    """None when Redis answers in time, else the error that stopped it."""
+    try:
+        await asyncio.wait_for(redis.ping(), 1.0)
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 @router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
     state = request.app.state
-    cached: tuple[float, dict[str, str]] | None = getattr(state, "ready_cache", None)
+    cached: tuple[float, dict[str, str], str | None] | None = getattr(state, "ready_cache", None)
     now = time.monotonic()
     if cached is not None and now - cached[0] < settings.ready_cache_ttl_s:
-        backends = cached[1]
+        _, backends, redis_error = cached
     else:
         backends = await _probe(state.http, state.registry)
-        state.ready_cache = (now, backends)
+        # Without Redis every limited route fails closed, so the pod is not ready either.
+        redis_error = await _ping_redis(state.redis)
+        state.ready_cache = (now, backends, redis_error)
 
-    is_ready = bool(backends) and all(status == "ok" for status in backends.values())
-    body: dict[str, Any] = (
-        {"status": "ready"} if is_ready else {"status": "not_ready", "backends": backends}
+    is_ready = (
+        bool(backends)
+        and all(status == "ok" for status in backends.values())
+        and redis_error is None
     )
+    body: dict[str, Any] = {"status": "ready"} if is_ready else {"status": "not_ready"}
+    if not is_ready:
+        body["backends"] = backends
+        if redis_error is not None:
+            body["redis"] = redis_error
     return JSONResponse(status_code=200 if is_ready else 503, content=body)

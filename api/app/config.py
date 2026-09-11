@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     backend_read_timeout_s: float = 120.0
     backend_retries: int = 2
     ready_cache_ttl_s: float = 5.0
+    # How long shutdown waits for in-flight usage writes before giving up on them.
+    usage_flush_timeout_s: float = 5.0
     database_url: str = "postgresql+asyncpg://openmodel_app:app@localhost:5432/openmodel"
     database_owner_url: str = "postgresql+asyncpg://openmodel_owner:owner@localhost:5432/openmodel"
     redis_url: str = "redis://localhost:6379/0"

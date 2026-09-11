@@ -61,6 +61,10 @@ class NoopSlot(ConcurrencySlot):
         return None
 
 
+async def _pong() -> bool:
+    return True
+
+
 async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     """Client for an app built on `registry`, with the lifespan (app.state.http) entered.
 
@@ -79,6 +83,8 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     ):
         # The lifespan installed the real background writer; these tests have no database.
         app.state.usage_sink = USAGE_RECORDS.append
+        # /ready pings Redis; these tests have none either, so the ping always answers.
+        app.state.redis.ping = _pong
         yield client
 
 

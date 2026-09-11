@@ -95,7 +95,7 @@ async def aggregate(
     keys = {
         "model": Request.model_name,
         "user": AppUser.email,
-        "day": func.date_trunc("day", Request.created_at),
+        "day": func.date_trunc("day", func.timezone("UTC", Request.created_at)),
     }
     key = keys[group_by] if group_by else None
     columns = [

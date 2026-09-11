@@ -64,7 +64,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
         finally:
             # Metering is fire-and-forget, so shutdown is where pending writes get to land.
-            await asyncio.gather(*usage_tasks, return_exceptions=True)
+            # Bounded: a wedged write must not hold the pod past its grace period.
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*usage_tasks, return_exceptions=True),
+                    timeout=settings.usage_flush_timeout_s,
+                )
+            except TimeoutError:
+                log.warning("usage_flush_timeout", pending=len(usage_tasks))
             await redis_client.aclose()
             await engine.dispose()
 
