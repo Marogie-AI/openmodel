@@ -3,16 +3,28 @@
 import asyncio
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
+from typing import Literal, TypedDict
 from uuid import UUID
 
 import structlog
 from fastapi import Request as HttpRequest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Request
+from app.db.models import ApiKey, AppUser, Request
 from app.schemas.backend import Usage
 
 log = structlog.get_logger()
+
+GroupBy = Literal["model", "user", "day"]
+
+
+class UsageRow(TypedDict):
+    key: str | None
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
 
 
 @dataclass(frozen=True)
@@ -70,3 +82,57 @@ def schedule_write(
 def schedule(request: HttpRequest, record: UsageRecord) -> None:
     """Hand one record to the app's sink (the background writer, or a test double)."""
     request.app.state.usage_sink(record)
+
+
+async def aggregate(
+    session: AsyncSession,
+    organization_id: UUID,
+    since: datetime,
+    until: datetime,
+    group_by: GroupBy | None,
+) -> list[UsageRow]:
+    """Usage of one organization over [since, until), totalled or grouped."""
+    keys = {
+        "model": Request.model_name,
+        "user": AppUser.email,
+        "day": func.date_trunc("day", Request.created_at),
+    }
+    key = keys[group_by] if group_by else None
+    columns = [
+        func.count(),
+        func.coalesce(func.sum(Request.prompt_tokens), 0),
+        func.coalesce(func.sum(Request.completion_tokens), 0),
+    ]
+    statement = (
+        select(*([key] if key is not None else []), *columns)
+        .join(ApiKey, Request.api_key_id == ApiKey.id)
+        .join(AppUser, ApiKey.user_id == AppUser.id)
+        .where(
+            AppUser.organization_id == organization_id,
+            Request.created_at >= since,
+            Request.created_at < until,
+        )
+    )
+    if key is not None:
+        statement = statement.group_by(key).order_by(key)
+    rows = (await session.execute(statement)).all()
+
+    if key is None:
+        requests, prompt_tokens, completion_tokens = rows[0]
+        return [
+            {
+                "key": None,
+                "requests": requests,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            }
+        ]
+    return [
+        {
+            "key": value.date().isoformat() if group_by == "day" else str(value),
+            "requests": requests,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
+        for value, requests, prompt_tokens, completion_tokens in rows
+    ]

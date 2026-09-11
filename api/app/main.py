@@ -18,7 +18,7 @@ from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
 from app.ratelimit import enforce
 from app.router import Registry
-from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models
+from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models, usage
 from app.usage import schedule_write
 
 
@@ -98,6 +98,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(completions.router, dependencies=limited)
     app.include_router(embeddings.router, dependencies=limited)
     app.include_router(keys.router, dependencies=authed)
+    app.include_router(usage.router, dependencies=authed)
     app.include_router(metrics.router)
     return app
 
