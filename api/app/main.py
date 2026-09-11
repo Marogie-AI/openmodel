@@ -134,7 +134,8 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(chat.router, dependencies=limited)
     app.include_router(completions.router, dependencies=limited)
     app.include_router(embeddings.router, dependencies=limited)
-    app.include_router(keys.router, dependencies=authed)
+    # Minting a key costs a token like any other call: it is the one authed route that writes.
+    app.include_router(keys.router, dependencies=limited)
     app.include_router(usage.router, dependencies=authed)
     app.include_router(metrics.router)
     return app

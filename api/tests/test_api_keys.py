@@ -74,6 +74,13 @@ async def test_another_users_key_is_not_visible_or_deletable(
     assert response.json()["error"]["code"] == "not_found"
 
 
+async def test_creating_a_key_spends_a_rate_limit_token(auth_client: AsyncClient) -> None:
+    created = await auth_client.post("/api/keys")
+
+    assert created.status_code == 201
+    assert created.headers["X-RateLimit-Limit"]
+
+
 async def test_create_key_hashes_off_the_event_loop(
     auth_client: AsyncClient, record_to_thread: list[object]
 ) -> None:
