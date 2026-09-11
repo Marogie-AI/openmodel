@@ -18,7 +18,7 @@ from app.config import settings
 from app.db.seed import seed_plans
 from app.db.session import make_engine, make_sessionmaker
 from app.main import create_app
-from app.ratelimit import enforce
+from app.ratelimit import ConcurrencySlot, enforce, slot_for
 from app.router import ModelSpec, Registry
 
 BACKEND_URL = "http://ollama.test:11434"
@@ -44,6 +44,19 @@ TEST_PRINCIPAL = Principal(
 )
 
 
+class NoopSlot(ConcurrencySlot):
+    """A concurrency slot that touches no Redis, for the route tests that run without one."""
+
+    def __init__(self) -> None:
+        pass
+
+    async def acquire(self) -> None:
+        return None
+
+    async def release(self) -> None:
+        return None
+
+
 async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     """Client for an app built on `registry`, with the lifespan (app.state.http) entered.
 
@@ -51,8 +64,10 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     """
     app = create_app(registry)
     app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
-    # `enforce` too: these tests exercise routes, not Redis. Limits are tested via `auth_client`.
+    # `enforce` and the slot too: these tests exercise routes, not Redis. Limits are tested
+    # through `auth_client` against the real Redis.
     app.dependency_overrides[enforce] = lambda: TEST_PRINCIPAL
+    app.dependency_overrides[slot_for] = NoopSlot
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,

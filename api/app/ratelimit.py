@@ -61,42 +61,6 @@ async def take_token(redis: Redis, org_id: UUID, rpm: int, now: float | None = N
     )
 
 
-class ConcurrencySlot:
-    """Holds one of an organization's in-flight request slots for the duration of the block."""
-
-    def __init__(self, redis: Redis, org_id: UUID, limit: int) -> None:
-        self.redis = redis
-        self.key = f"cc:{org_id}"
-        self.limit = limit
-
-    async def _release(self) -> None:
-        await self.redis.register_script(RELEASE_SLOT_LUA)(keys=[self.key])
-
-    async def __aenter__(self) -> "ConcurrencySlot":
-        held = int(await self.redis.incr(self.key))
-        await self.redis.expire(self.key, SLOT_TTL_S)
-        if held > self.limit:
-            await self._release()
-            raise RateLimited(
-                "Too many concurrent requests", retry_after_s=1, limit=self.limit, remaining=0
-            )
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        await self._release()
-
-
-def slot_for(request: Request, principal: Principal) -> ConcurrencySlot:
-    return ConcurrencySlot(
-        request.app.state.redis, principal.organization_id, principal.max_concurrency
-    )
-
-
 async def enforce(
     request: Request, principal: Annotated[Principal, Depends(require_principal)]
 ) -> Principal:
@@ -113,3 +77,53 @@ async def enforce(
             remaining=0,
         )
     return principal
+
+
+class ConcurrencySlot:
+    """Holds one of an organization's in-flight request slots until it is released."""
+
+    def __init__(self, redis: Redis, org_id: UUID, limit: int) -> None:
+        self.redis = redis
+        self.key = f"cc:{org_id}"
+        self.limit = limit
+
+    async def acquire(self) -> None:
+        """Take a slot, or raise RateLimited when the organization is already at its cap."""
+        held = int(await self.redis.incr(self.key))
+        try:
+            if held == 1:
+                # Only on create: refreshing the TTL on every enter would keep a leaked
+                # increment alive forever on a busy organization.
+                await self.redis.expire(self.key, SLOT_TTL_S)
+        except Exception:
+            await self.release()
+            raise
+        if held > self.limit:
+            await self.release()
+            raise RateLimited(
+                "Too many concurrent requests", retry_after_s=1, limit=self.limit, remaining=0
+            )
+
+    async def release(self) -> None:
+        await self.redis.register_script(RELEASE_SLOT_LUA)(keys=[self.key])
+
+    async def __aenter__(self) -> "ConcurrencySlot":
+        await self.acquire()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.release()
+
+
+def slot_for(
+    request: Request, principal: Annotated[Principal, Depends(enforce)]
+) -> ConcurrencySlot:
+    """Dependency so tests can swap the slot out; the routes never build one themselves."""
+    return ConcurrencySlot(
+        request.app.state.redis, principal.organization_id, principal.max_concurrency
+    )

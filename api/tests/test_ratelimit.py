@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -153,9 +154,26 @@ async def test_slot_never_counts_below_zero(redis_client: aioredis.Redis) -> Non
 
     async with slot(redis_client, org):
         pass
-    await ConcurrencySlot(redis_client, org, 2)._release()
+    await ConcurrencySlot(redis_client, org, 2).release()
 
     assert await concurrency_count(redis_client) == 0
+
+
+async def test_slot_ttl_is_set_on_create_and_not_refreshed(redis_client: aioredis.Redis) -> None:
+    org = uuid4()
+    first = slot(redis_client, org)
+    await first.acquire()
+    created_ttl = await redis_client.pttl(first.key)
+    assert 0 < created_ttl <= 300_000
+
+    await asyncio.sleep(0.05)
+    second = slot(redis_client, org)
+    await second.acquire()
+
+    # A leaked increment must still expire, so a second enter may not push the TTL out.
+    assert await redis_client.pttl(first.key) < created_ttl
+    await second.release()
+    await first.release()
 
 
 # --- enforcement on the LLM routes -------------------------------------------
@@ -245,6 +263,28 @@ async def test_the_plan_concurrency_cap_refuses_the_extra_request(
     assert response.json()["error"]["message"] == "Too many concurrent requests"
     assert response.headers["x-ratelimit-limit"] == "1"
     assert response.headers["retry-after"] == "1"
+
+
+@respx.mock
+async def test_a_stream_over_the_cap_is_a_429_before_any_chunk(
+    redis_client: aioredis.Redis, db_client: AsyncClient, auth_client: AsyncClient
+) -> None:
+    await set_free_plan(db_client, concurrency=1)
+    respx.post(CHAT_URL).mock(return_value=ollama_reply())
+    await auth_client.post("/v1/chat/completions", json=BODY)  # warms the auth cache
+    org = UUID((await redis_client.keys("cc:*"))[0].removeprefix("cc:"))
+
+    async with ConcurrencySlot(redis_client, org, 1):
+        response = await auth_client.post("/v1/chat/completions", json={**BODY, "stream": True})
+
+    assert response.status_code == 429
+    assert not response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["error"] == {
+        "message": "Too many concurrent requests",
+        "type": "rate_limit_error",
+        "code": "rate_limit_exceeded",
+    }
 
 
 @respx.mock

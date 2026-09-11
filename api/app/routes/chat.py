@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from app.auth.principal import Principal
 from app.metrics import observe_ttft, record_usage, track
-from app.ratelimit import enforce, slot_for
+from app.ratelimit import ConcurrencySlot, enforce, slot_for
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
 from app.schemas.backend import ChatDelta, ChatResult
 from app.schemas.chat import (
@@ -26,7 +26,10 @@ router = APIRouter()
 
 @router.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
-    request: Request, body: ChatRequest, principal: Annotated[Principal, Depends(enforce)]
+    request: Request,
+    body: ChatRequest,
+    principal: Annotated[Principal, Depends(enforce)],
+    slot: Annotated[ConcurrencySlot, Depends(slot_for)],
 ) -> ChatCompletion | StreamingResponse:
     backend = backend_for(request, body.model, "chat", principal)
     messages = [message.model_dump() for message in body.messages]
@@ -50,6 +53,8 @@ async def chat_completions(
         )
 
     if body.stream:
+        # Acquired here, not inside the generator: an overflow must be a 429 before headers.
+        await slot.acquire()
 
         def event(content: str, final: ChatDelta | None) -> bytes:
             if final is None:
@@ -64,13 +69,13 @@ async def chat_completions(
                 body.model,
                 "chat",
                 prelude=chunk({"role": "assistant", "content": ""}),
-                slot=slot_for(request, principal),
+                slot=slot,
             ),
             media_type="text/event-stream",
             headers=STREAM_HEADERS,
         )
 
-    async with slot_for(request, principal), track(body.model, "chat"):
+    async with slot, track(body.model, "chat"):
         start = time.perf_counter()
         result: ChatResult = await backend.chat(body.model, messages, options)
         observe_ttft(body.model, time.perf_counter() - start)

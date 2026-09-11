@@ -1,8 +1,6 @@
 import contextlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager
-from typing import Any
 
 from fastapi import Request
 
@@ -53,31 +51,33 @@ async def stream_events(
     prelude: bytes | None = None,
     slot: ConcurrencySlot | None = None,
 ) -> AsyncIterator[bytes]:
+    """Drive one SSE response. `slot`, if given, is already acquired and is released here."""
     async with track(model, endpoint) as tracked:
         start = time.perf_counter()
         first_token = True
-        # The slot is held for the stream's lifetime, and released on disconnect, error or close.
-        held: AbstractAsyncContextManager[Any] = contextlib.nullcontext() if slot is None else slot
         try:
-            async with held:
-                if prelude is not None:
-                    yield prelude
-                # aclosing: a disconnect closes the backend generator, cancelling the upstream call.
-                async with contextlib.aclosing(deltas) as stream:
-                    async for delta in stream:
-                        if await request.is_disconnected():
-                            return
-                        if delta.content:
-                            if first_token:
-                                observe_ttft(model, time.perf_counter() - start)
-                                first_token = False
-                            yield chunk(delta.content, None)
-                        if delta.done:
-                            if delta.usage is not None:
-                                record_usage(model, delta.usage)
-                            yield chunk("", delta)
+            if prelude is not None:
+                yield prelude
+            # aclosing: a disconnect closes the backend generator, cancelling the upstream call.
+            async with contextlib.aclosing(deltas) as stream:
+                async for delta in stream:
+                    if await request.is_disconnected():
+                        return
+                    if delta.content:
+                        if first_token:
+                            observe_ttft(model, time.perf_counter() - start)
+                            first_token = False
+                        yield chunk(delta.content, None)
+                    if delta.done:
+                        if delta.usage is not None:
+                            record_usage(model, delta.usage)
+                        yield chunk("", delta)
         except ApiError as exc:
             # The error is delivered in-stream rather than raised, so count it here.
             tracked.failed()
             yield error_event(exc)
+        finally:
+            # Completion, disconnect, error or an abandoned generator: the slot goes back.
+            if slot is not None:
+                await slot.release()
     yield DONE
