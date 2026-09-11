@@ -1,3 +1,4 @@
+import socket
 from collections.abc import AsyncIterator
 
 from fastapi import Request
@@ -32,9 +33,10 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         try:
             yield session
             await session.commit()
-        except OSError as exc:
-            # SQLAlchemy only wraps errors the driver reports; a failure to reach the server at
-            # all comes through raw from asyncpg (socket.gaierror, ConnectionRefusedError).
+        except (ConnectionError, socket.gaierror) as exc:
+            # SQLAlchemy only wraps errors the driver reports, and it never sees these: a
+            # failure to open the socket comes through raw from asyncpg. Not the OSError base,
+            # which since 3.11 also covers TimeoutError — a slow anything is not a dead database.
             await session.rollback()
             raise DatabaseUnavailable() from exc
         except Exception:

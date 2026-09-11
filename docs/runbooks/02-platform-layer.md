@@ -265,8 +265,9 @@ resolving the caller reads the cache before anything else:
 ```
 
 `/health` stays 200 throughout — the process is fine, its dependency is not.
-`docker compose start redis` and the next request is served; buckets start
-empty, so callers briefly get a full minute's budget back.
+`docker compose start redis` and the next request is served. Each bucket key is
+absent and so starts full, which briefly hands every caller a fresh minute's
+budget.
 
 Stop Postgres:
 

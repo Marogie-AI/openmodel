@@ -2,15 +2,17 @@
 
 from collections.abc import Callable
 from socket import gaierror
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.principal import cache_key, require_principal
+from app.db.session import get_session
 from app.main import create_app
 from app.ratelimit import slot_for
 from tests.conftest import TEST_PRINCIPAL, TEST_REGISTRY, NoopSlot, client_for
@@ -57,11 +59,12 @@ def dead_sessionmaker(error: Exception) -> Callable[[], DeadSession]:
     return lambda: DeadSession(error)
 
 
-# The two ways Postgres goes away: the driver reports it (SQLAlchemy wraps), or the socket never
-# opens (asyncpg raises the OSError raw).
+# The ways Postgres goes away: the driver reports it (SQLAlchemy wraps), or the socket never
+# opens at all (asyncpg raises the OSError raw, and SQLAlchemy never sees it).
 DB_ERRORS = [
     OperationalError("SELECT 1", {}, Exception("server closed the connection")),
     gaierror(-2, "Name or service not known"),
+    ConnectionRefusedError(61, "Connect call failed"),
 ]
 
 
@@ -106,6 +109,25 @@ async def test_uncached_key_fails_closed_when_postgres_is_down(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "database_unavailable"
+
+
+async def test_a_timeout_in_a_route_is_not_blamed_on_the_database() -> None:
+    """TimeoutError is an OSError since 3.11; get_session must not read it as a dead Postgres."""
+    app = create_app(TEST_REGISTRY)
+
+    @app.get("/slow")
+    async def slow(session: Annotated[AsyncSession, Depends(get_session)]) -> None:
+        raise TimeoutError("took too long")
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        response = await client.get("/slow")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] is None
 
 
 async def test_an_unhandled_exception_still_renders_the_envelope() -> None:
