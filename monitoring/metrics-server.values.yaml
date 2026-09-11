@@ -1,0 +1,32 @@
+# metrics-server for `kubectl top` and the HPA's resource metrics (Task 4 adds
+# the custom-metric HPA on top; metrics-server is what makes `top` work at all).
+#
+# Installed by scripts/cluster-up.sh as release `metrics-server` in kube-system.
+
+args:
+  # kind's kubelet serves its metrics endpoint with a self-signed cert that is
+  # not in the cluster CA bundle. Without this the API service never becomes
+  # Available. Acceptable on a local dev cluster only.
+  - --kubelet-insecure-tls
+  # One node, so no need to wait on the default 4-address preference list.
+  - --kubelet-preferred-address-types=InternalIP
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+# kube-system is not PSA-restricted, but there is no reason to run looser.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop: [ALL]

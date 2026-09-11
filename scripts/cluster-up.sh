@@ -9,6 +9,8 @@ CALICO_VERSION=v3.30.0
 # (bundle v1.3.0, experimental channel). Re-check that bundle when bumping the chart.
 ENVOY_GATEWAY_VERSION=v1.4.0
 CERT_MANAGER_VERSION=v1.17.2
+KUBE_PROMETHEUS_STACK_VERSION=77.5.0
+METRICS_SERVER_VERSION=3.13.0
 
 if kind get clusters | grep -qx "$CLUSTER"; then
   echo "==> kind cluster '$CLUSTER' already exists, skipping create"
@@ -57,6 +59,32 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   -n cert-manager --create-namespace --version "$CERT_MANAGER_VERSION" \
   --set crds.enabled=true --wait --timeout 10m
 kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=300s
+
+echo "==> installing the monitoring stack"
+# Namespaces (with their PSA labels) must exist before helm, or chart pods land
+# in an unlabelled namespace and the restricted enforcement is never exercised.
+kubectl apply -f "$REPO_ROOT/kubernetes/base/namespaces.yaml"
+
+# Grafana starts with `admin.existingSecret: grafana-admin`, so the Secret has
+# to exist before helm --wait, which is before deploy.sh ever runs. The dev
+# overlay generates the same Secret from the same file, so re-applying the
+# overlay later is a no-op rather than a conflict.
+"$REPO_ROOT/scripts/secrets.sh" >/dev/null
+kubectl -n openmodel-monitoring create secret generic grafana-admin \
+  --from-env-file="$REPO_ROOT/kubernetes/overlays/dev/secrets/grafana.env" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update
+helm repo update prometheus-community metrics-server
+
+helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+  --version "$KUBE_PROMETHEUS_STACK_VERSION" -n openmodel-monitoring \
+  -f "$REPO_ROOT/monitoring/kube-prometheus-stack.values.yaml" --wait --timeout 10m
+
+helm upgrade --install metrics-server metrics-server/metrics-server \
+  --version "$METRICS_SERVER_VERSION" -n kube-system \
+  -f "$REPO_ROOT/monitoring/metrics-server.values.yaml" --wait --timeout 5m
 
 # The NetworkPolicy that lets Ollama out to the model registry carves the node's
 # own network out of 0.0.0.0/0 by CIDR, and Docker does not hand every machine

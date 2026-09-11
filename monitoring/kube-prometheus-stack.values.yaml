@@ -1,0 +1,212 @@
+# kube-prometheus-stack, lean for a single-node kind cluster on an 8GB Docker VM.
+#
+# Two hard constraints shape this file:
+#   1. Memory. The node already runs Postgres, Redis, Ollama and Envoy. So:
+#      no node-exporter (host metrics are not the lesson here), no Alertmanager
+#      (Phase 4 alerts are read in the Prometheus/Grafana UI, there is no
+#      receiver), 2h retention, no persistence.
+#   2. PSA `restricted` on openmodel-monitoring, which we refuse to relax.
+#      Every pod below therefore carries an explicit restricted securityContext
+#      even where the chart default already complies — the explicit value is
+#      what keeps a chart bump from silently regressing admission.
+#
+# Installed by scripts/cluster-up.sh as release `kps` (chart pinned there).
+
+# Host-level metrics: not worth ~60Mi + a DaemonSet on a one-node dev cluster.
+nodeExporter:
+  enabled: false
+
+# No receiver exists, so Alertmanager would only cost memory. Rules still
+# evaluate and fire — visible in Prometheus /alerts and in Grafana.
+alertmanager:
+  enabled: false
+
+# kind runs etcd/controller-manager/scheduler/kube-proxy bound to 127.0.0.1 on
+# the node, so these scrape jobs are permanently DOWN and only add noise.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# Kept: kubelet carries cAdvisor, which is where per-pod CPU/memory comes from.
+kubelet:
+  enabled: true
+coreDns:
+  enabled: true
+kubeApiServer:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+# Subchart values (key is the subchart name, not `kubeStateMetrics`).
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+  # Kept enabled: the kube-webhook-certgen Jobs are restricted-compliant in
+  # this chart version (pod runs as uid 2000 non-root with RuntimeDefault
+  # seccomp, containers drop ALL). Verified: no FailedCreate events.
+  admissionWebhooks:
+    patch:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+
+prometheus:
+  prometheusSpec:
+    # 2h of samples at 15s over a handful of targets fits comfortably in the
+    # emptyDir; retentionSize is the backstop so a cardinality mistake cannot
+    # fill the node's disk.
+    retention: 2h
+    retentionSize: 512MB
+    walCompression: true
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 768Mi
+    # Select ServiceMonitors/PodMonitors/Rules from ANY namespace without
+    # requiring the helm release label — our own objects (Task 2/3) live in
+    # openmodel-api / openmodel-data / envoy-gateway-system and are not part of
+    # this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 2000
+      fsGroup: 2000
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+
+grafana:
+  enabled: true
+  # Password comes from the Secret scripts/secrets.sh generates; nothing is
+  # committed. See kubernetes/overlays/dev/kustomization.yaml.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: false
+  # Root init container (`chown` on the data dir) — violates restricted, and
+  # with persistence off there is nothing to chown.
+  initChownData:
+    enabled: false
+  # Test pod runs as root and is only useful in CI.
+  testFramework:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+  sidecar:
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    # 64Mi OOMKilled both sidecars within a minute (exit 137): k8s-sidecar
+    # watches every namespace (searchNamespace: ALL) and the python client's
+    # working set does not fit. 128Mi is stable. Raised deliberately, not
+    # silently — the Grafana container itself stays at the budgeted 128/256Mi.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 48Mi
+      limits:
+        memory: 128Mi
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # Task 3 ships the dashboard ConfigMap from our own kustomize base, which
+      # may land in a different namespace than Grafana.
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      # Alertmanager is disabled above, so this datasource would only ever
+      # render a connection error in Grafana's alerting UI.
+      alertmanager:
+        enabled: false
+  # The chart's bundled Kubernetes dashboards are ~20 large ConfigMaps the
+  # sidecar would have to load; Task 3 ships the one dashboard we actually use.
+  defaultDashboardsEnabled: false
