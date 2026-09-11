@@ -18,3 +18,9 @@ secretGenerator:
     namespace: openmodel-api
     envs:
       - secrets/api.env
+  # The owner DSN is split out so only the migrate Job and its initContainer
+  # mount it; the serving container never sees a DDL-capable role.
+  - name: api-migrate-secrets
+    namespace: openmodel-api
+    envs:
+      - secrets/api-migrate.env

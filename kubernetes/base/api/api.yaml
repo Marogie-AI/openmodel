@@ -52,13 +52,15 @@ spec:
           image: openmodel-api:dev
           imagePullPolicy: IfNotPresent
           command: ["alembic", "upgrade", "head"]
-          # alembic/env.py connects as the owner (OPENMODEL_DATABASE_OWNER_URL);
-          # both DSNs live in api-secrets.
+          # alembic/env.py connects as the owner (OPENMODEL_DATABASE_OWNER_URL),
+          # which lives in api-migrate-secrets and nowhere else.
           envFrom:
             - configMapRef:
                 name: api-config
             - secretRef:
                 name: api-secrets
+            - secretRef:
+                name: api-migrate-secrets
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -135,11 +137,14 @@ spec:
             - sh
             - -c
             - "until alembic current 2>/dev/null | grep -q '(head)'; do echo waiting for migrations; sleep 2; done"
+          # Needs the owner DSN too: `alembic current` connects the same way.
           envFrom:
             - configMapRef:
                 name: api-config
             - secretRef:
                 name: api-secrets
+            - secretRef:
+                name: api-migrate-secrets
           volumeMounts:
             - name: tmp
               mountPath: /tmp
