@@ -34,9 +34,14 @@ kubectl -n openmodel-api rollout restart deploy/api
 kubectl -n openmodel-api rollout status deploy/api --timeout=180s
 
 # May already have been reaped by its TTL, in which case there is nothing to
-# wait for and the models are long since on the PVC.
-echo "==> waiting for the model pull job (skipped if already reaped)"
-kubectl -n openmodel-inference wait --for=condition=complete job/ollama-pull --timeout=600s || true
+# wait for and the models are long since on the PVC. If it is there, a failed
+# pull has to fail the deploy — the API is useless without weights.
+if kubectl -n openmodel-inference get job ollama-pull >/dev/null 2>&1; then
+  echo "==> waiting for the model pull job"
+  kubectl -n openmodel-inference wait --for=condition=complete job/ollama-pull --timeout=600s
+else
+  echo "==> model pull job already reaped by its TTL; skipping"
+fi
 
 echo "==> cluster state"
 kubectl get pods -A
