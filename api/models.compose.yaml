@@ -5,3 +5,7 @@ models:
   - name: nomic-embed-text
     backend_url: http://ollama:11434
     capabilities: [embedding]
+  # On the `pro` plan only. Not pulled by `ollama-pull`; listed so plan gating is visible.
+  - name: qwen2.5-coder:0.5b
+    backend_url: http://ollama:11434
+    capabilities: [chat, completion]
