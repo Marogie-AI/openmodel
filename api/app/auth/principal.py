@@ -8,15 +8,15 @@ from dataclasses import dataclass
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import Depends, Header, Request
+from fastapi import Header, Request
 from redis.asyncio import Redis
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.keys import parse_key, verify_secret
 from app.config import settings
 from app.db.models import ApiKey, PlanModel
-from app.db.session import get_session
+from app.db.session import translate_db_errors
 from app.errors import Unauthorized
 
 # One message for every failure mode: an unknown key_id must not be distinguishable from a bad
@@ -98,7 +98,9 @@ async def _load(key_id: str, secret: str, session: AsyncSession) -> dict[str, An
     }
 
 
-async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -> Principal:
+async def resolve_principal(
+    raw_key: str, sessionmaker: async_sessionmaker[AsyncSession], redis: Redis
+) -> Principal:
     parsed = parse_key(raw_key)
     if parsed is None:
         raise Unauthorized(INVALID_KEY)
@@ -112,7 +114,11 @@ async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -
             raise Unauthorized(INVALID_KEY)
         return _principal(cached)
 
-    fresh = await _load(key_id, secret, session)
+    # Its own short session, closed before the caller's real work starts: on the request-scoped
+    # session the autobegun read transaction would sit idle for the whole LLM call, and a handful
+    # of cache misses would hold the pool open until Postgres killed the connections.
+    async with translate_db_errors(), sessionmaker() as session:
+        fresh = await _load(key_id, secret, session)
     # Index first: a cache entry the plan set does not know about would survive a plan edit.
     plan_set = plan_keys(fresh["plan_code"])
     await redis.sadd(plan_set, key_id)
@@ -123,10 +129,11 @@ async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -
 
 async def require_principal(
     request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> Principal:
     scheme, _, raw_key = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not raw_key:
         raise Unauthorized(INVALID_KEY)
-    return await resolve_principal(raw_key.strip(), session, request.app.state.redis)
+    return await resolve_principal(
+        raw_key.strip(), request.app.state.sessionmaker, request.app.state.redis
+    )

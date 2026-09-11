@@ -1,5 +1,6 @@
 import socket
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import (
@@ -26,6 +27,20 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+@asynccontextmanager
+async def translate_db_errors() -> AsyncIterator[None]:
+    """Report a Postgres that cannot be reached at all as a 503.
+
+    SQLAlchemy only wraps errors the driver reports, and it never sees these: a failure to open
+    the socket comes through raw from asyncpg. Not the OSError base, which since 3.11 also covers
+    TimeoutError — a slow anything is not a dead database.
+    """
+    try:
+        yield
+    except (ConnectionError, socket.gaierror) as exc:
+        raise DatabaseUnavailable() from exc
+
+
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     """Request-scoped session, rolled back on exception.
 
@@ -36,13 +51,8 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     sessionmaker: async_sessionmaker[AsyncSession] = request.app.state.sessionmaker
     async with sessionmaker() as session:
         try:
-            yield session
-        except (ConnectionError, socket.gaierror) as exc:
-            # SQLAlchemy only wraps errors the driver reports, and it never sees these: a
-            # failure to open the socket comes through raw from asyncpg. Not the OSError base,
-            # which since 3.11 also covers TimeoutError — a slow anything is not a dead database.
-            await session.rollback()
-            raise DatabaseUnavailable() from exc
+            async with translate_db_errors():
+                yield session
         except Exception:
             await session.rollback()
             raise

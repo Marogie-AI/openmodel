@@ -1,10 +1,17 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import httpx
 import pytest
 import redis.asyncio as aioredis
+import respx
+from fastapi import FastAPI
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import principal as principal_module
 from app.auth.keys import generate_key, parse_key
-from tests.conftest import ADMIN_HEADERS
+from tests.conftest import ADMIN_HEADERS, BACKEND_URL
 
 pytestmark = pytest.mark.db
 
@@ -129,3 +136,49 @@ async def test_a_keys_plan_models_come_from_its_own_plan(db_client: AsyncClient)
 
     # The pro plan also grants qwen2.5-coder:0.5b, which the test registry does not serve.
     assert [model["id"] for model in response.json()["data"]] == FREE_MODELS
+
+
+@respx.mock
+async def test_a_cache_miss_does_not_hold_a_session_into_the_backend_call(
+    db_app: FastAPI, auth_client: AsyncClient
+) -> None:
+    """Auth reads through its own short session. Holding the request-scoped one instead would
+    leave a transaction idle for the length of the LLM call, one pooled connection each."""
+    real = db_app.state.sessionmaker
+    open_sessions = 0
+
+    @asynccontextmanager
+    async def counting() -> AsyncIterator[AsyncSession]:
+        nonlocal open_sessions
+        open_sessions += 1
+        try:
+            async with real() as session:
+                yield session
+        finally:
+            open_sessions -= 1
+
+    db_app.state.sessionmaker = counting
+    seen: list[int] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        seen.append(open_sessions)
+        return httpx.Response(
+            200,
+            json={
+                "message": {"role": "assistant", "content": "hi"},
+                "done": True,
+                "done_reason": "stop",
+                "prompt_eval_count": 1,
+                "eval_count": 1,
+            },
+        )
+
+    respx.post(f"{BACKEND_URL}/api/chat").mock(side_effect=reply)
+
+    response = await auth_client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen == [0]
