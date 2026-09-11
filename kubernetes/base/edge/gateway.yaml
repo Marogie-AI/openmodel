@@ -1,0 +1,140 @@
+# The edge: the Envoy data plane Envoy Gateway provisions for us (EnvoyProxy),
+# the GatewayClass that points at it, the Gateway itself, and the cert-manager
+# self-signed issuer + Certificate that backs the HTTPS listener.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: openmodel-proxy
+  namespace: openmodel-edge
+  labels:
+    app.kubernetes.io/name: envoy
+    app.kubernetes.io/part-of: openmodel
+# Infrastructure settings for the envoy Deployment/Service that Envoy Gateway
+# generates from the Gateway below. Referenced by the GatewayClass.
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        # NodePort, not LoadBalancer: kind has no cloud provider, and its config
+        # maps host 80/443 onto node ports 30080/30443. The patch pins those
+        # nodePorts — the port names must match the generated Service exactly
+        # (Envoy Gateway names them "http-<port>"/"https-<port>").
+        type: NodePort
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - name: http-80
+                  port: 80
+                  nodePort: 30080
+                - name: https-443
+                  port: 443
+                  nodePort: 30443
+      envoyDeployment:
+        # Envoy Gateway runs the data plane pods in its own namespace
+        # (envoy-gateway-system), which carries no PSA labels — so restricted is
+        # not enforced on them and nothing here was required for admission.
+        # Set anyway so the data plane meets the same bar as the rest of the
+        # platform. 65532 is the distroless nonroot uid the envoy image uses.
+        pod:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+        container:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: openmodel
+  labels:
+    app.kubernetes.io/part-of: openmodel
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: openmodel-proxy
+    namespace: openmodel-edge
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: openmodel
+  namespace: openmodel-edge
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: openmodel
+spec:
+  gatewayClassName: openmodel
+  listeners:
+    # Plain HTTP exists only to carry the 301 to HTTPS (see routes.yaml).
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: api.openmodel.test
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              app.kubernetes.io/part-of: openmodel
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: api.openmodel.test
+      tls:
+        mode: Terminate
+        # Secret written by the Certificate below, same namespace as the
+        # Gateway, so no ReferenceGrant is needed.
+        certificateRefs:
+          - name: api-openmodel-test-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              app.kubernetes.io/part-of: openmodel
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+  labels:
+    app.kubernetes.io/part-of: openmodel
+# Self-signed is the whole point for a local cluster: no ACME, no CA to run.
+# Clients use `curl -k` / trust the cert manually.
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-openmodel-test
+  namespace: openmodel-edge
+  labels:
+    app.kubernetes.io/part-of: openmodel
+# An explicit Certificate rather than the cert-manager Gateway annotation: the
+# annotation generates a Certificate we would not control, and this one is the
+# resource whose renewal we can watch.
+spec:
+  secretName: api-openmodel-test-tls
+  dnsNames:
+    - api.openmodel.test
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer

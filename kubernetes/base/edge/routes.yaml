@@ -1,0 +1,56 @@
+# Routes attaching the API Service to the Gateway. They live in openmodel-api,
+# next to the backend they point at; the cross-namespace parentRef is permitted
+# by the Gateway's allowedRoutes selector, so no ReferenceGrant is required
+# (a grant would only be needed for a cross-namespace backendRef).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: openmodel
+spec:
+  parentRefs:
+    - name: openmodel
+      namespace: openmodel-edge
+      sectionName: https
+  hostnames:
+    - api.openmodel.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: api
+          port: 8000
+      # The default 15s request timeout would cut long SSE completions off
+      # mid-stream. 180s matches the API's own upstream budget.
+      timeouts:
+        request: 180s
+        backendRequest: 180s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-redirect
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: openmodel
+# Everything on the http listener is redirected; no backendRefs, so plaintext
+# never reaches the API.
+spec:
+  parentRefs:
+    - name: openmodel
+      namespace: openmodel-edge
+      sectionName: http
+  hostnames:
+    - api.openmodel.test
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
