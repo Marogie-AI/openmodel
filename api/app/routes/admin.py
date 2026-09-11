@@ -56,7 +56,7 @@ async def list_plans(session: Session) -> list[PlanOut]:
 @router.put("/plans/{code}")
 async def upsert_plan(
     request: Request,
-    code: Annotated[str, Path(min_length=1, max_length=32)],
+    code: Annotated[str, Path(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")],
     body: PlanUpsert,
     session: Session,
 ) -> PlanOut:

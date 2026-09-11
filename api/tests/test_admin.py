@@ -184,6 +184,19 @@ async def test_overlong_plan_input_is_rejected_before_it_reaches_the_database(
     assert long_model.status_code == 422
 
 
+async def test_out_of_range_plan_input_is_rejected_before_it_reaches_the_database(
+    db_client: AsyncClient,
+) -> None:
+    """A number past an int32 column used to reach the driver and come back a 500."""
+    body = {"requests_per_minute": 10**20, "max_concurrency": 1, "models": ["m"]}
+
+    response = await db_client.put("/admin/plans/free", json=body, headers=ADMIN_HEADERS)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert "requests_per_minute" in response.json()["error"]["message"]
+
+
 async def test_admin_create_key_hashes_off_the_event_loop(
     db_client: AsyncClient, record_to_thread: list[object]
 ) -> None:

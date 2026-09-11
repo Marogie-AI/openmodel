@@ -13,14 +13,16 @@ class PlanOut(BaseModel):
 
 
 class PlanUpsert(BaseModel):
-    requests_per_minute: int = Field(gt=0)
-    max_concurrency: int = Field(gt=0)
-    models: list[Annotated[str, Field(min_length=1, max_length=128)]]
+    # Upper bounds as well as lower: anything past an int32 column is a 422, not a 500 from the
+    # driver. The ceilings are far above any real plan.
+    requests_per_minute: int = Field(ge=1, le=1_000_000)
+    max_concurrency: int = Field(ge=1, le=1_000_000)
+    models: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(max_length=100)
 
 
 class OrgCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    plan_code: str = Field(min_length=1, max_length=32)
+    plan_code: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")
 
 
 class OrgOut(BaseModel):
