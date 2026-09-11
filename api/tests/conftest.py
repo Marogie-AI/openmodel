@@ -1,14 +1,17 @@
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import redis.asyncio as aioredis
+from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alembic import command
 from app.config import settings
+from app.db.seed import seed_plans
 from app.db.session import make_engine, make_sessionmaker
 from app.main import create_app
 from app.router import ModelSpec, Registry
@@ -67,6 +70,17 @@ async def redis_available() -> bool:
 
 
 _services_up: bool | None = None
+_migrated = False
+
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+
+
+def alembic_config() -> Config:
+    """Alembic config for the committed alembic.ini, usable outside the CLI."""
+    config = Config(str(ALEMBIC_INI))
+    config.cmd_opts = None
+    config.attributes["configure_logger"] = False
+    return config
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +93,10 @@ async def skip_without_services(request: pytest.FixtureRequest) -> None:
         _services_up = await db_available() and await redis_available()
     if not _services_up:
         pytest.skip("postgres/redis not reachable")
+    global _migrated
+    if not _migrated:
+        await asyncio.to_thread(command.upgrade, alembic_config(), "head")
+        _migrated = True
 
 
 TABLES = "plan_model, request, api_key, app_user, organization, plan"
@@ -86,17 +104,13 @@ TABLES = "plan_model, request, api_key, app_user, organization, plan"
 
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
-    """Owner session on an empty database."""
+    """Owner session on a database holding nothing but the seeded plans."""
     engine = make_engine(settings.database_owner_url)
     sessionmaker = make_sessionmaker(engine)
     async with sessionmaker() as s:
-        try:
-            await s.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
-        except ProgrammingError:
-            # Task 2 creates the tables; drop this guard then (and re-seed plans).
-            await s.rollback()
-        else:
-            await s.commit()
+        await s.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
+        await s.commit()
+        await seed_plans(s)
         yield s
     await engine.dispose()
 

@@ -1,13 +1,15 @@
 from collections.abc import AsyncIterator
 from typing import Annotated
+from uuid import uuid4
 
 import pytest
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import Organization
 from app.db.session import get_session
 from app.main import create_app
 from tests.conftest import TEST_REGISTRY
@@ -39,21 +41,22 @@ async def test_get_session_yields_usable_session() -> None:
         assert response.json() == {"one": 1}
 
 
-async def test_get_session_closes_session_when_handler_raises() -> None:
-    seen: list[AsyncSession] = []
+async def test_get_session_rolls_back_when_handler_raises(session: AsyncSession) -> None:
+    name = f"org-{uuid4()}"
 
-    async def probe(session: Annotated[AsyncSession, Depends(get_session)]) -> None:
-        seen.append(session)
-        await session.execute(text("SELECT 1"))
+    async def probe(db: Annotated[AsyncSession, Depends(get_session)]) -> None:
+        db.add(Organization(name=name, plan_code="free"))
+        await db.flush()
         raise RuntimeError("boom")
 
     async for client in client_for(app_with(probe)):
         with pytest.raises(RuntimeError, match="boom"):
             await client.get("/probe")
 
-    # Tables land in Task 2; until then "rolled back" shows up as a closed, idle session.
-    assert len(seen) == 1
-    assert not seen[0].in_transaction()
+    count = await session.scalar(
+        select(func.count()).select_from(Organization).where(Organization.name == name)
+    )
+    assert count == 0
 
 
 async def test_session_fixture_is_usable(session: AsyncSession) -> None:
