@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import settings
+from app.errors import DatabaseUnavailable
 
 
 def make_engine(url: str) -> AsyncEngine:
@@ -31,6 +32,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         try:
             yield session
             await session.commit()
+        except OSError as exc:
+            # SQLAlchemy only wraps errors the driver reports; a failure to reach the server at
+            # all comes through raw from asyncpg (socket.gaierror, ConnectionRefusedError).
+            await session.rollback()
+            raise DatabaseUnavailable() from exc
         except Exception:
             await session.rollback()
             raise
