@@ -9,6 +9,9 @@ metadata:
 spec:
   # Headless: the governing Service of the StatefulSet. DNS postgres.openmodel-data
   # resolves to the pod IP, which is what the app connects to.
+  # Runbook: with a single replica this is unambiguous, but headless DNS
+  # round-robins across all ready pods. If replicas ever exceed 1, writes must
+  # target the stable per-pod name postgres-0.postgres.openmodel-data.
   clusterIP: None
   selector:
     app.kubernetes.io/name: postgres

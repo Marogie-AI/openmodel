@@ -6,6 +6,10 @@ set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kubernetes/overlays/dev/secrets"
 force="${1:-}"
+if [[ -n "$force" && "$force" != "--force" ]]; then
+  echo "usage: $(basename "$0") [--force]" >&2
+  exit 2
+fi
 mkdir -p "$dir"
 
 if [[ -e "$dir/postgres.env" || -e "$dir/api.env" ]] && [[ "$force" != "--force" ]]; then

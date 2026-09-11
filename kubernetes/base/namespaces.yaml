@@ -1,6 +1,7 @@
-# Pod Security Admission: restricted everywhere except openmodel-data, where the
-# postgres image needs baseline (it writes as uid 999 into a mounted PVC and the
-# entrypoint chowns PGDATA). warn/audit stay restricted so violations are visible.
+# Pod Security Admission: restricted everywhere except openmodel-data, which runs
+# baseline to leave headroom for future data-tier images (operators, exporters)
+# that need more than restricted allows. Postgres and redis as deployed here are
+# restricted-compliant. warn/audit stay restricted so any regression is visible.
 apiVersion: v1
 kind: Namespace
 metadata:
