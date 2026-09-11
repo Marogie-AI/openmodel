@@ -16,16 +16,53 @@ services:
     command: ["ollama pull qwen2.5:0.5b && ollama pull nomic-embed-text"]
     restart: "no"
 
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: openmodel
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    ports:
+      - "${OPENMODEL_PG_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+      - ./api/sql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./api/sql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openmodel"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   api:
     build: ./api
     ports:
       - "${OPENMODEL_HOST_PORT:-8000}:8000"
     environment:
       OPENMODEL_MODELS_FILE: /app/models.compose.yaml
+      OPENMODEL_DATABASE_URL: postgresql+asyncpg://openmodel_app:app@postgres:5432/openmodel
+      OPENMODEL_DATABASE_OWNER_URL: postgresql+asyncpg://openmodel_owner:owner@postgres:5432/openmodel
+      OPENMODEL_REDIS_URL: redis://redis:6379/0
     volumes:
       - ./api/models.compose.yaml:/app/models.compose.yaml:ro
     depends_on:
-      - ollama
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
 volumes:
   ollama:
+  postgres:
