@@ -1,5 +1,7 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 import httpx
 import redis.asyncio as aioredis
@@ -17,6 +19,7 @@ from app.metrics import MetricsMiddleware
 from app.ratelimit import enforce
 from app.router import Registry
 from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models
+from app.usage import schedule_write
 
 
 @asynccontextmanager
@@ -28,12 +31,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool=10,
     )
     engine = make_engine(settings.database_url)
+    usage_tasks: set[asyncio.Task[None]] = set()
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
     async with httpx.AsyncClient(timeout=timeout) as http:
         app.state.http = http
         app.state.engine = engine
         app.state.sessionmaker = make_sessionmaker(engine)
         app.state.redis = redis_client
+        app.state.usage_tasks = usage_tasks
+        app.state.usage_sink = partial(schedule_write, app.state.sessionmaker, usage_tasks)
         registry: Registry = app.state.registry
         app.state.backends = {
             url: OllamaBackend(client=http, base_url=url, retries=settings.backend_retries)
@@ -42,6 +48,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
+            # Metering is fire-and-forget, so shutdown is where pending writes get to land.
+            await asyncio.gather(*usage_tasks, return_exceptions=True)
             await redis_client.aclose()
             await engine.dispose()
 
