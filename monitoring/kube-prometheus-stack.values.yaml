@@ -37,8 +37,11 @@ kubelet:
   enabled: true
 coreDns:
   enabled: true
+# The apiserver job alone was ~79% of all scraped samples (70k of 88k series)
+# on this cluster — mostly per-verb/per-resource request histograms nothing in
+# Phase 4 reads. Prometheus sat at 429Mi of its 768Mi limit for it.
 kubeApiServer:
-  enabled: true
+  enabled: false
 
 kubeStateMetrics:
   enabled: true

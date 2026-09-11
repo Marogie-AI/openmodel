@@ -86,12 +86,15 @@ helm upgrade --install metrics-server metrics-server/metrics-server \
   --version "$METRICS_SERVER_VERSION" -n kube-system \
   -f "$REPO_ROOT/monitoring/metrics-server.values.yaml" --wait --timeout 5m
 
-# The NetworkPolicy that lets Ollama out to the model registry carves the node's
-# own network out of 0.0.0.0/0 by CIDR, and Docker does not hand every machine
-# the same bridge subnet. Print it so a mismatch is visible rather than silent.
+# Two policy files hardcode this environment's addressing: inference.yaml carves
+# the node's own network out of 0.0.0.0/0 by CIDR, and monitoring.yaml allows the
+# node IP for the kubelet scrape and for port-forward. Docker does not hand every
+# machine the same bridge subnet, so print it rather than let a mismatch be silent.
 BRIDGE_CIDR="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' \
   2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | head -1)"
-echo "==> node/bridge CIDR: ${BRIDGE_CIDR:-unknown} — check kubernetes/base/policies/inference.yaml"
+NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
+echo "==> node/bridge CIDR: ${BRIDGE_CIDR:-unknown}, node IP: ${NODE_IP:-unknown}"
+echo "    both are hardcoded in kubernetes/base/policies/{inference,monitoring}.yaml"
 
 cat <<'MSG'
 

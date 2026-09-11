@@ -8,8 +8,6 @@ args:
   # not in the cluster CA bundle. Without this the API service never becomes
   # Available. Acceptable on a local dev cluster only.
   - --kubelet-insecure-tls
-  # One node, so no need to wait on the default 4-address preference list.
-  - --kubelet-preferred-address-types=InternalIP
 
 resources:
   requests:
