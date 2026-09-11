@@ -81,3 +81,24 @@ class Conflict(ApiError):
     status_code = 409
     type = "invalid_request_error"
     code = "conflict"
+
+
+class RateLimited(ApiError):
+    status_code = 429
+    type = "rate_limit_error"
+    code = "rate_limit_exceeded"
+
+    def __init__(self, message: str, *, retry_after_s: int, limit: int, remaining: int) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+        self.limit = limit
+        self.remaining = remaining
+
+
+class ModelNotAllowed(ApiError):
+    status_code = 403
+    type = "invalid_request_error"
+    code = "model_not_allowed"
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Your plan does not include the model '{name}'.")
