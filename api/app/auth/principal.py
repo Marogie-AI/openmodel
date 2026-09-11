@@ -113,8 +113,11 @@ async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -
         return _principal(cached)
 
     fresh = await _load(key_id, secret, session)
+    # Index first: a cache entry the plan set does not know about would survive a plan edit.
+    plan_set = plan_keys(fresh["plan_code"])
+    await redis.sadd(plan_set, key_id)
+    await redis.expire(plan_set, settings.auth_cache_ttl_s)
     await redis.set(cache_key(key_id), json.dumps(fresh), ex=settings.auth_cache_ttl_s)
-    await redis.sadd(plan_keys(fresh["plan_code"]), key_id)
     return _principal(fresh)
 
 

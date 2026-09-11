@@ -70,7 +70,8 @@ async def upsert_plan(
 
     await session.execute(delete(PlanModel).where(PlanModel.plan_code == code))
     session.add_all(PlanModel(plan_code=code, model_name=name) for name in sorted(set(body.models)))
-    await session.flush()
+    # Commit before dropping the cache: a rollback after the drop would refill it from stale rows.
+    await session.commit()
     # Cached principals carry the old limits and model list; drop them rather than wait out the TTL.
     await drop_plan_cached(request.app.state.redis, code)
     return PlanOut(
