@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -14,7 +15,7 @@ class PlanOut(BaseModel):
 class PlanUpsert(BaseModel):
     requests_per_minute: int = Field(gt=0)
     max_concurrency: int = Field(gt=0)
-    models: list[str]
+    models: list[Annotated[str, Field(min_length=1, max_length=128)]]
 
 
 class OrgCreate(BaseModel):

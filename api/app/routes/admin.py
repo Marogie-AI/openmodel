@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,14 +53,16 @@ async def list_plans(session: Session) -> list[PlanOut]:
 
 
 @router.put("/plans/{code}")
-async def upsert_plan(code: str, body: PlanUpsert, session: Session) -> PlanOut:
+async def upsert_plan(
+    code: Annotated[str, Path(min_length=1, max_length=32)], body: PlanUpsert, session: Session
+) -> PlanOut:
     plan = await session.get(Plan, code)
     if plan is None:
         plan = Plan(code=code)
         session.add(plan)
     plan.requests_per_minute = body.requests_per_minute
     plan.max_concurrency = body.max_concurrency
-    await _flush(session, f"Plan '{code}' already exists.")
+    await _flush(session, f"Concurrent update to plan '{code}'; retry.")
 
     await session.execute(delete(PlanModel).where(PlanModel.plan_code == code))
     session.add_all(PlanModel(plan_code=code, model_name=name) for name in sorted(set(body.models)))

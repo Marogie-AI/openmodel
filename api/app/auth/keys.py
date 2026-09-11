@@ -20,7 +20,12 @@ class GeneratedKey:
     prefix: str
 
 
+ENV_RE = re.compile(r"^[a-z]+$")
+
+
 def generate_key(env: str) -> GeneratedKey:
+    if ENV_RE.match(env) is None:
+        raise ValueError(f"env must match {ENV_RE.pattern}, got {env!r}")
     key_id = secrets.token_urlsafe(9)
     secret = secrets.token_urlsafe(24)
     prefix = f"om_{env}_{key_id}"
