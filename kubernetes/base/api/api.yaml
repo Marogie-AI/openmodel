@@ -88,6 +88,9 @@ metadata:
     app.kubernetes.io/part-of: openmodel
 spec:
   replicas: 2
+  # Deliberately not narrowed to component=api: a Deployment's selector is
+  # immutable, and the ReplicaSet's pod-template-hash already keeps the migrate
+  # Job's pods (same name label) from ever being adopted here.
   selector:
     matchLabels:
       app.kubernetes.io/name: api
@@ -95,6 +98,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: api
+        # Distinguishes the serving pods from the migrate Job's pods, which
+        # carry the same name label: the Service must never select those.
+        app.kubernetes.io/component: api
         app.kubernetes.io/part-of: openmodel
     spec:
       # 20s: uvicorn drains in-flight requests, then shutdown waits up to
@@ -178,12 +184,15 @@ spec:
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
-            # /ready probes the backends and Redis, cached for 5s.
+            # /ready probes the backends and Redis, cached for 5s. An uncached
+            # probe can take ~3s (backend connect 2s + redis ping 1s), so the
+            # default 1s timeout would fail it spuriously.
             httpGet:
               path: /ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             # /health is process-only on purpose: a dependency outage must make
@@ -196,9 +205,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 192Mi
+              memory: 128Mi
             limits:
-              cpu: 1000m
+              cpu: 500m
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
@@ -223,6 +232,7 @@ metadata:
 spec:
   selector:
     app.kubernetes.io/name: api
+    app.kubernetes.io/component: api
   ports:
     - name: http
       port: 8000
