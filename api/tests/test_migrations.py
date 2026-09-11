@@ -56,12 +56,14 @@ async def test_upgrade_creates_the_schema_and_seeds_plans(migrated: None) -> Non
 
 
 async def test_app_role_can_insert_into_organization(migrated: None) -> None:
+    """The owner's default privileges reach freshly migrated tables. Rolled back, not kept."""
     engine = make_engine(settings.database_url)
     try:
-        async with engine.begin() as connection:
+        async with engine.connect() as connection:
             await connection.execute(
                 text("INSERT INTO organization (id, name, plan_code) VALUES (:id, :name, 'free')"),
                 {"id": uuid4(), "name": f"org-{uuid4()}"},
             )
+            await connection.rollback()
     finally:
         await engine.dispose()

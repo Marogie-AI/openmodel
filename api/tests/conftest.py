@@ -78,7 +78,6 @@ ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 def alembic_config() -> Config:
     """Alembic config for the committed alembic.ini, usable outside the CLI."""
     config = Config(str(ALEMBIC_INI))
-    config.cmd_opts = None
     config.attributes["configure_logger"] = False
     return config
 

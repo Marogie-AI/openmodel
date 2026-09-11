@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from sqlalchemy import delete, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,12 @@ PLAN_MODEL_ROWS: list[dict[str, Any]] = [
 
 
 async def seed_plans(session: AsyncSession) -> None:
-    """Insert the plan reference rows, updating limits if they already exist."""
+    """Make the plan reference data match PLAN_ROWS/PLAN_MODEL_ROWS exactly.
+
+    plan_model is authorization data, so rows that are no longer listed are deleted: leaving
+    them behind would keep granting access to a model the plan no longer includes.
+    """
+    codes = [row["code"] for row in PLAN_ROWS]
     plan = insert(Plan).values(PLAN_ROWS)
     await session.execute(
         plan.on_conflict_do_update(
@@ -37,5 +43,13 @@ async def seed_plans(session: AsyncSession) -> None:
         insert(PlanModel)
         .values(PLAN_MODEL_ROWS)
         .on_conflict_do_nothing(index_elements=[PlanModel.plan_code, PlanModel.model_name])
+    )
+    await session.execute(
+        delete(PlanModel).where(
+            PlanModel.plan_code.in_(codes),
+            tuple_(PlanModel.plan_code, PlanModel.model_name).notin_(
+                [(row["plan_code"], row["model_name"]) for row in PLAN_MODEL_ROWS]
+            ),
+        )
     )
     await session.commit()

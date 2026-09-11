@@ -1,5 +1,8 @@
 """seed plans
 
+The plan catalogue changes through a NEW migration, never by editing this one: the rows here
+are history for every database that has already run it.
+
 Revision ID: 0002
 Revises: 0001
 Create Date: 2026-09-11 11:45:35.261234
@@ -30,8 +33,8 @@ plan_model = sa.table(
 
 
 def upgrade() -> None:
-    op.bulk_insert(plan, PLAN_ROWS)
-    op.bulk_insert(plan_model, PLAN_MODEL_ROWS)
+    op.bulk_insert(plan, PLAN_ROWS, multiinsert=False)
+    op.bulk_insert(plan_model, PLAN_MODEL_ROWS, multiinsert=False)
 
 
 def downgrade() -> None:
