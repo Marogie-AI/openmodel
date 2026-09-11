@@ -18,10 +18,24 @@ spec:
   hostnames:
     - api.openmodel.test
   rules:
+    # Only the API surface is public. /metrics and /docs stay cluster-internal
+    # (reachable via port-forward); anything unmatched 404s at Envoy.
     - matches:
         - path:
             type: PathPrefix
-            value: /
+            value: /v1
+        - path:
+            type: PathPrefix
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /admin
+        - path:
+            type: Exact
+            value: /health
+        - path:
+            type: Exact
+            value: /ready
       backendRefs:
         - name: api
           port: 8000
