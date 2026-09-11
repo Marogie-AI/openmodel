@@ -81,4 +81,9 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         finally:
             structlog.contextvars.clear_contextvars()
         response.headers[REQUEST_ID_HEADER] = request_id
+        rate = getattr(request.state, "rate", None)
+        if rate is not None:
+            # setdefault: a 429 handler has already written the limit that was actually hit.
+            response.headers.setdefault("X-RateLimit-Limit", str(rate.limit))
+            response.headers.setdefault("X-RateLimit-Remaining", str(rate.remaining))
         return response

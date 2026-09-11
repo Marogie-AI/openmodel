@@ -18,6 +18,7 @@ from app.config import settings
 from app.db.seed import seed_plans
 from app.db.session import make_engine, make_sessionmaker
 from app.main import create_app
+from app.ratelimit import enforce
 from app.router import ModelSpec, Registry
 
 BACKEND_URL = "http://ollama.test:11434"
@@ -50,6 +51,8 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     """
     app = create_app(registry)
     app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
+    # `enforce` too: these tests exercise routes, not Redis. Limits are tested via `auth_client`.
+    app.dependency_overrides[enforce] = lambda: TEST_PRINCIPAL
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,

@@ -11,9 +11,10 @@ from app.auth.principal import require_principal
 from app.backends.ollama import OllamaBackend
 from app.config import settings
 from app.db.session import make_engine, make_sessionmaker
-from app.errors import ApiError, InvalidRequest, envelope
+from app.errors import ApiError, InvalidRequest, RateLimited, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
+from app.ratelimit import enforce
 from app.router import Registry
 from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models
 
@@ -45,12 +46,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await engine.dispose()
 
 
+def _error_headers(exc: ApiError) -> dict[str, str] | None:
+    if exc.status_code == 401:
+        return {"WWW-Authenticate": "Bearer"}
+    if isinstance(exc, RateLimited):
+        return {
+            "Retry-After": str(exc.retry_after_s),
+            "X-RateLimit-Limit": str(exc.limit),
+            "X-RateLimit-Remaining": str(exc.remaining),
+        }
+    return None
+
+
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ApiError)
     return JSONResponse(
-        status_code=exc.status_code,
-        content=envelope(exc),
-        headers={"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None,
+        status_code=exc.status_code, content=envelope(exc), headers=_error_headers(exc)
     )
 
 
@@ -73,10 +84,11 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(admin.router)
     app.include_router(health.router)
     authed = [Depends(require_principal)]
+    limited = [Depends(enforce)]
     app.include_router(models.router, dependencies=authed)
-    app.include_router(chat.router, dependencies=authed)
-    app.include_router(completions.router, dependencies=authed)
-    app.include_router(embeddings.router, dependencies=authed)
+    app.include_router(chat.router, dependencies=limited)
+    app.include_router(completions.router, dependencies=limited)
+    app.include_router(embeddings.router, dependencies=limited)
     app.include_router(keys.router, dependencies=authed)
     app.include_router(metrics.router)
     return app

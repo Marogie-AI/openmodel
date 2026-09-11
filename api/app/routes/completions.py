@@ -1,11 +1,14 @@
 import time
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.auth.principal import Principal
 from app.errors import PromptListUnsupported
 from app.metrics import observe_ttft, record_usage, track
+from app.ratelimit import enforce, slot_for
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
 from app.schemas.backend import ChatDelta, ChatResult
 from app.schemas.chat import UsageOut
@@ -24,8 +27,10 @@ def _prompt(prompt: str | list[str]) -> str:
 
 
 @router.post("/v1/completions", response_model=None)
-async def completions(request: Request, body: CompletionRequest) -> Completion | StreamingResponse:
-    backend = backend_for(request, body.model, "completion")
+async def completions(
+    request: Request, body: CompletionRequest, principal: Annotated[Principal, Depends(enforce)]
+) -> Completion | StreamingResponse:
+    backend = backend_for(request, body.model, "completion", principal)
     prompt = _prompt(body.prompt)
     options = options_from(body.temperature, body.top_p, body.max_tokens)
     completion_id = "cmpl-" + uuid4().hex[:24]
@@ -52,12 +57,13 @@ async def completions(request: Request, body: CompletionRequest) -> Completion |
                 event,
                 body.model,
                 "completion",
+                slot=slot_for(request, principal),
             ),
             media_type="text/event-stream",
             headers=STREAM_HEADERS,
         )
 
-    async with track(body.model, "completion"):
+    async with slot_for(request, principal), track(body.model, "completion"):
         start = time.perf_counter()
         result: ChatResult = await backend.generate(body.model, prompt, options)
         observe_ttft(body.model, time.perf_counter() - start)
