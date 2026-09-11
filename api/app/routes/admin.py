@@ -3,13 +3,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.admin import require_admin
 from app.auth.keys import generate_key, hash_secret_async
+from app.auth.principal import drop_plan_cached
 from app.config import settings
 from app.db.models import ApiKey, AppUser, Organization, Plan, PlanModel
 from app.db.session import get_session
@@ -54,7 +55,10 @@ async def list_plans(session: Session) -> list[PlanOut]:
 
 @router.put("/plans/{code}")
 async def upsert_plan(
-    code: Annotated[str, Path(min_length=1, max_length=32)], body: PlanUpsert, session: Session
+    request: Request,
+    code: Annotated[str, Path(min_length=1, max_length=32)],
+    body: PlanUpsert,
+    session: Session,
 ) -> PlanOut:
     plan = await session.get(Plan, code)
     if plan is None:
@@ -67,6 +71,8 @@ async def upsert_plan(
     await session.execute(delete(PlanModel).where(PlanModel.plan_code == code))
     session.add_all(PlanModel(plan_code=code, model_name=name) for name in sorted(set(body.models)))
     await session.flush()
+    # Cached principals carry the old limits and model list; drop them rather than wait out the TTL.
+    await drop_plan_cached(request.app.state.redis, code)
     return PlanOut(
         code=code,
         requests_per_minute=plan.requests_per_minute,

@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import Depends, Header, Request
@@ -39,6 +39,11 @@ def cache_key(key_id: str) -> str:
     return f"auth:{key_id}"
 
 
+def plan_keys(plan_code: str) -> str:
+    """Set of cached key_ids on a plan, so a plan edit can drop exactly those entries."""
+    return f"plan_keys:{plan_code}"
+
+
 def _fast_hash(secret: str) -> str:
     """Cheap peppered digest of the secret. Only ever stored in Redis, under the cache TTL."""
     return hashlib.sha256((secret + settings.key_pepper).encode()).hexdigest()
@@ -46,6 +51,15 @@ def _fast_hash(secret: str) -> str:
 
 async def drop_cached(redis: Redis, key_id: str) -> None:
     await redis.delete(cache_key(key_id))
+
+
+async def drop_plan_cached(redis: Redis, plan_code: str) -> None:
+    """Drop every cached principal on a plan; call after the plan's limits or models change."""
+    # The app client is decode_responses=True, so members come back as str.
+    key_ids = cast(set[str], await redis.smembers(plan_keys(plan_code)))
+    if key_ids:
+        await redis.delete(*(cache_key(key_id) for key_id in key_ids))
+    await redis.delete(plan_keys(plan_code))
 
 
 def _principal(cached: dict[str, Any]) -> Principal:
@@ -100,6 +114,7 @@ async def resolve_principal(raw_key: str, session: AsyncSession, redis: Redis) -
 
     fresh = await _load(key_id, secret, session)
     await redis.set(cache_key(key_id), json.dumps(fresh), ex=settings.auth_cache_ttl_s)
+    await redis.sadd(plan_keys(fresh["plan_code"]), key_id)
     return _principal(fresh)
 
 
