@@ -1,0 +1,15 @@
+# The registry the API serves, mounted at /config/models.yaml via ConfigMap
+# `api-models`. Same shape as api/models.yaml, with the in-cluster backend URL.
+models:
+  - name: qwen2.5:0.5b
+    backend_url: http://ollama.openmodel-inference:11434
+    capabilities: [chat, completion]
+  - name: nomic-embed-text
+    backend_url: http://ollama.openmodel-inference:11434
+    capabilities: [embedding]
+  # Listed but not pulled: the pro plan grants access to it, so it has to exist
+  # in the registry for plan gating to be exercised. Calls to it 503 until the
+  # weights are pulled — same as the compose registry.
+  - name: qwen2.5-coder:0.5b
+    backend_url: http://ollama.openmodel-inference:11434
+    capabilities: [chat, completion]

@@ -1,0 +1,229 @@
+# The API tier: config, the migrate Job that owns the schema, the Deployment
+# and its Service. Secrets (`api-secrets`) come from the overlay, by name only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: openmodel
+# A plain resource, not a generator: these values are referenced by `envFrom`
+# only, so a stable name is all that matters and a hash would force a rollout.
+data:
+  OPENMODEL_MODELS_FILE: /config/models.yaml
+  OPENMODEL_LOG_LEVEL: INFO
+  OPENMODEL_ENVIRONMENT: dev
+  OPENMODEL_REDIS_URL: redis://redis.openmodel-data:6379/0
+  OPENMODEL_READY_CACHE_TTL_S: "5"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-migrate
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/component: migrate
+    app.kubernetes.io/part-of: openmodel
+# A Job's spec is immutable, so re-running migrations against a new image needs
+# the Job gone first: scripts/deploy.sh deletes it before every apply. The TTL
+# reaps it afterwards so a stale "Complete" does not mask the next deploy.
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/component: migrate
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      # Never, not OnFailure: a failed pod is kept for `kubectl logs`.
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: openmodel-api:dev
+          imagePullPolicy: IfNotPresent
+          command: ["alembic", "upgrade", "head"]
+          # alembic/env.py connects as the owner (OPENMODEL_DATABASE_OWNER_URL);
+          # both DSNs live in api-secrets.
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: openmodel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      # 20s: uvicorn drains in-flight requests, then shutdown waits up to
+      # OPENMODEL_USAGE_FLUSH_TIMEOUT_S (5s) for pending usage writes.
+      terminationGracePeriodSeconds: 20
+      affinity:
+        podAntiAffinity:
+          # Preferred, not required: the dev cluster has one node, so a hard
+          # rule would leave the second replica unschedulable forever.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The Job and the Deployment roll out in parallel, so a fresh pod can
+        # start against a half-migrated schema. Block until alembic reports the
+        # head revision; `alembic current` only reads alembic_version.
+        - name: wait-for-migrations
+          image: openmodel-api:dev
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - "until alembic current 2>/dev/null | grep -q '(head)'; do echo waiting for migrations; sleep 2; done"
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      containers:
+        - name: api
+          image: openmodel-api:dev
+          # The image is built locally and side-loaded with `kind load`, so it
+          # must never be pulled. Same tag on every build: deploy.sh restarts
+          # the Deployment so a rebuilt :dev is actually picked up.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: api-secrets
+          volumeMounts:
+            - name: models
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            # 30 x 2s = 60s for the app to import and open its pools.
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            # /ready probes the backends and Redis, cached for 5s.
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            # /health is process-only on purpose: a dependency outage must make
+            # the pod unready, never restart it.
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: models
+          configMap:
+            name: api-models
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: openmodel
+spec:
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

@@ -6,6 +6,7 @@ resources:
   - data/postgres.yaml
   - data/redis.yaml
   - inference/ollama.yaml
+  - api/api.yaml
 
 # Stable ConfigMap names so the StatefulSet volume refs do not need editing.
 # Trade-off: no automatic rollout on config change — after editing these files
@@ -24,3 +25,7 @@ configMapGenerator:
     namespace: openmodel-data
     files:
       - data/01_roles.sh
+  - name: api-models
+    namespace: openmodel-api
+    files:
+      - api/models.yaml
