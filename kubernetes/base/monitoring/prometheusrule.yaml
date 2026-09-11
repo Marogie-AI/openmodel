@@ -1,0 +1,103 @@
+# Alert rules for the OpenModel stack. The kube-prometheus-stack release runs
+# with ruleSelectorNilUsesHelmValues=false, so this object needs no release
+# label. Alertmanager is disabled (Global Constraints: 8GB host) — these alerts
+# are visible in the Prometheus UI (/alerts) and in Grafana, and route nowhere.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: openmodel
+  namespace: openmodel-monitoring
+  labels:
+    app.kubernetes.io/name: openmodel
+    app.kubernetes.io/part-of: openmodel
+spec:
+  groups:
+    - name: openmodel
+      # Matches the 15s/30s scrape intervals: no rule fires on a single sample.
+      interval: 30s
+      rules:
+        - alert: ApiHighErrorRate
+          # No traffic means no result, not a division by zero: the alert simply
+          # does not fire on an idle cluster.
+          expr: |
+            sum(rate(http_requests_total{job="api", status=~"5.."}[5m]))
+              / sum(rate(http_requests_total{job="api"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            description: >-
+              More than 5% of API responses have been 5xx for 5 minutes
+              (currently {{ $value | humanizePercentage }}).
+
+        - alert: ApiHighLatency
+          # All routes together, so a slow chat completion can trip this even
+          # when /v1/embeddings is fine — check the latency panel per path.
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{job="api"}[5m]))) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              API p95 latency is {{ $value | humanizeDuration }}, above 2s for 5 minutes.
+
+        - alert: ApiPodRestarts
+          # increase() over 15m is the window; `for` only has to outlast one
+          # scrape, otherwise a crash that is already over goes unreported.
+          expr: increase(kube_pod_container_status_restarts_total{namespace="openmodel-api"}[15m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              Container {{ $labels.container }} in {{ $labels.pod }} restarted
+              {{ $value | printf "%.0f" }} time(s) in the last 15 minutes.
+
+        - alert: PostgresDown
+          # Two failure modes: the exporter is up and cannot reach Postgres
+          # (pg_up == 0), or the whole pod is gone so the target vanishes
+          # (absent). Without the absent() arm, deleting postgres-0 would
+          # silence this alert instead of firing it.
+          expr: pg_up == 0 or absent(pg_up)
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            description: Postgres is unreachable — the API cannot authenticate any request.
+
+        - alert: PvcAlmostFull
+          # Dormant on kind: the local-path provisioner hands out hostPath
+          # volumes, whose volume plugin exposes no metrics, so the kubelet
+          # never exports kubelet_volume_stats_*. Real (CSI) storage does.
+          expr: 100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 80
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is
+              {{ $value | printf "%.0f" }}% full.
+
+        - alert: LlmBackendErrors
+          # Counted where the backend call fails, not where the client sees a
+          # 5xx: a 502 from a model that is out of memory lands here first.
+          expr: sum by (model) (rate(llm_requests_total{status="error"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              Model {{ $labels.model }} is failing {{ $value | printf "%.2f" }}
+              requests/s at the backend.
+
+        - alert: ApiNotReady
+          # 5m, not immediate: a rolling update drops availability briefly and
+          # that is not an incident.
+          expr: kube_deployment_status_replicas_available{namespace="openmodel-api", deployment="api"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            description: The api Deployment has no available replica; the gateway is serving 503s.
