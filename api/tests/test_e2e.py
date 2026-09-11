@@ -4,6 +4,7 @@ The stack ships with no keys, so the module bootstraps its own organization, use
 through the admin API before anything else runs.
 """
 
+import atexit
 import os
 import time
 from uuid import uuid4
@@ -22,7 +23,11 @@ ADMIN_HEADERS = {
 # The cluster serves a self-signed cert for api.openmodel.test. Set
 # OPENMODEL_INSECURE_TLS=1 to trust it; unset, verification stays on.
 VERIFY = os.environ.get("OPENMODEL_INSECURE_TLS") != "1"
+# Two clients on purpose: this one carries the raw admin and probe calls, while
+# the OpenAI SDK builds and owns its own (see the `client` fixture) so its
+# retry and timeout defaults stay untouched.
 HTTP = httpx.Client(verify=VERIFY)
+atexit.register(HTTP.close)
 
 CHAT_MODEL = "qwen2.5:0.5b"
 
@@ -52,7 +57,13 @@ def api_key() -> str:
 def client(api_key: str) -> OpenAI:
     if VERIFY:
         return OpenAI(base_url=BASE_URL, api_key=api_key)
-    return OpenAI(base_url=BASE_URL, api_key=api_key, http_client=httpx.Client(verify=False))
+    # ignore: the SDK types this against its own vendored httpx fork; an
+    # httpx.Client is what it actually accepts, and the suite proves it.
+    return OpenAI(
+        base_url=BASE_URL,
+        api_key=api_key,
+        http_client=httpx.Client(verify=False),  # type: ignore[arg-type]
+    )
 
 
 def test_a_request_without_a_key_is_rejected() -> None:

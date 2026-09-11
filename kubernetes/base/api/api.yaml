@@ -136,7 +136,10 @@ spec:
           command:
             - sh
             - -c
-            - "until alembic current 2>/dev/null | grep -q '(head)'; do echo waiting for migrations; sleep 2; done"
+            # stderr is deliberately not discarded: if the DSN is wrong, this
+            # loop's only output would otherwise be "waiting for migrations"
+            # forever, with no event anywhere explaining why.
+            - "until alembic current | grep -q '(head)'; do echo waiting for migrations; sleep 2; done"
           # Needs the owner DSN too: `alembic current` connects the same way.
           envFrom:
             - configMapRef:

@@ -58,6 +58,13 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --set crds.enabled=true --wait --timeout 10m
 kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=300s
 
+# The NetworkPolicy that lets Ollama out to the model registry carves the node's
+# own network out of 0.0.0.0/0 by CIDR, and Docker does not hand every machine
+# the same bridge subnet. Print it so a mismatch is visible rather than silent.
+BRIDGE_CIDR="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' \
+  2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | head -1)"
+echo "==> node/bridge CIDR: ${BRIDGE_CIDR:-unknown} — check kubernetes/base/policies/inference.yaml"
+
 cat <<'MSG'
 
 ==> cluster ready. Add this line to /etc/hosts (needs sudo, not done for you):

@@ -12,7 +12,7 @@ docker compose down
 
 ## Bring it up
 
-Four steps, in order, from the repo root:
+Three steps, in order, from the repo root:
 
 ```sh
 scripts/cluster-up.sh   # kind + Calico + Envoy Gateway + cert-manager
@@ -277,9 +277,10 @@ Deployment has minimum availability. ReplicaSet "api-bddf457b9" is progressing.
 gateway /ready: 200
 ```
 
-The init log says nothing useful, because the container's command sends
-alembic's stderr to `/dev/null`. Run it by hand inside the stuck pod to see the
-real cause:
+That output is from before this drill changed the manifest. At the time the
+wait loop sent alembic's stderr to `/dev/null`, so the log was those three
+words and nothing else, and the only way to the cause was to run the command by
+hand inside the stuck pod:
 
 ```sh
 kubectl -n openmodel-api exec <new-pod> -c wait-for-migrations -- alembic current
@@ -289,9 +290,11 @@ kubectl -n openmodel-api exec <new-pod> -c wait-for-migrations -- alembic curren
 asyncpg.exceptions.InvalidPasswordError: password authentication failed for user "openmodel_owner"
 ```
 
-That is the drill's real lesson: a wait loop that hides its errors turns a
-one-line failure into a guessing game. `describe` shows only `Started` on the
-initContainer — no event ever says why it is looping.
+That was the drill's real lesson — a wait loop that hides its errors turns a
+one-line failure into a guessing game, and `describe` shows only `Started` on
+the initContainer, so no event ever says why it is looping. The `2>/dev/null`
+is gone now: the same drill today prints that `InvalidPasswordError` into
+`kubectl logs -c wait-for-migrations` every two seconds.
 
 `kubectl rollout undo` puts the old template back and the stuck pod is deleted.
 
@@ -454,7 +457,7 @@ time is unnecessary.
 ### 11. Rebuild the whole thing
 
 The real test of the bootstrap: delete the cluster and build it again from the
-four scripts.
+same three scripts.
 
 ```sh
 time (scripts/cluster-down.sh && scripts/cluster-up.sh && scripts/secrets.sh && scripts/deploy.sh)
@@ -550,9 +553,16 @@ that never become ready, and a healthy pod is never retired for one of those.
 That is also why those failures are quiet. Nobody pages you; the deploy just
 sits there. `kubectl rollout status` is the thing that tells you.
 
-**Service versus pod IP.** Pod IPs change every time a pod is replaced —
-`192.168.120.35` became `.41` in drill 1 and nothing had to be reconfigured,
-because everything talks to a Service DNS name (`postgres.openmodel-data`,
+**Service versus pod IP.** Pod IPs change every time a pod is replaced.
+Deleting one api pod, with `kubectl get pods -o wide` before and after:
+
+```
+api-54f44cb669-l25tv   192.168.120.30      ->   api-54f44cb669-2ccrr   192.168.120.35
+api-54f44cb669-xps55   192.168.120.31      ->   api-54f44cb669-xps55   192.168.120.31
+```
+
+A new name, a new address, and nothing had to be reconfigured, because
+everything talks to a Service DNS name (`postgres.openmodel-data`,
 `redis.openmodel-data`, `ollama.openmodel-inference`). The Service is the
 stable name; the EndpointSlice behind it is the live list of pod IPs, filtered
 by readiness. When the gateway 503s, that list is the first thing to look at:

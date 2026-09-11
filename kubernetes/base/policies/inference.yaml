@@ -102,6 +102,16 @@ spec:
   egress:
     # ollama -> registry.ollama.ai over TLS. Everything inside the cluster
     # (pods, Services, nodes) is carved out so this stays an internet-only hole.
+    # The three exceptions are, in order: the Calico pod CIDR, the Service
+    # CIDR, and this machine's Docker `kind` bridge — the network the node
+    # itself sits on. That last one is host-specific:
+    #   docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+    # prints 172.22.0.0/16 here; a machine whose Docker assigned the bridge
+    # differently gets 172.18.0.0/16 or similar, and this list must match or
+    # the carve-out silently stops covering the node. scripts/cluster-up.sh
+    # prints the running value at the end so the drift is visible. On a cloud
+    # provider add 169.254.0.0/16 as well: the instance metadata service lives
+    # there, and 0.0.0.0/0 otherwise hands every pull pod a credential source.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
