@@ -1,25 +1,40 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 
 import httpx
 import redis.asyncio as aioredis
+import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.auth.principal import require_principal
 from app.backends.ollama import OllamaBackend
 from app.config import settings
 from app.db.session import make_engine, make_sessionmaker
-from app.errors import ApiError, InvalidRequest, RateLimited, envelope
+from app.errors import (
+    ApiError,
+    DatabaseUnavailable,
+    InvalidRequest,
+    RateLimited,
+    RateLimiterUnavailable,
+    ServiceUnavailable,
+    envelope,
+)
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
 from app.ratelimit import enforce
 from app.router import Registry
 from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models, usage
 from app.usage import schedule_write
+
+log = structlog.get_logger()
+
+Handler = Callable[[Request, Exception], Awaitable[JSONResponse]]
 
 
 @asynccontextmanager
@@ -81,6 +96,16 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
     return await api_error_handler(request, InvalidRequest(summary))
 
 
+def fail_closed(error: Callable[[], ServiceUnavailable], event: str) -> Handler:
+    """Handler that turns a dependency's own exception into a 503 in the OpenAI envelope."""
+
+    async def handler(request: Request, exc: Exception) -> JSONResponse:
+        log.warning(event, exc_info=exc)
+        return await api_error_handler(request, error())
+
+    return handler
+
+
 def create_app(registry: Registry | None = None) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="OpenModel API", lifespan=lifespan)
@@ -89,6 +114,11 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.add_middleware(MetricsMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
+    # Redis and Postgres outages fail closed: an unlimited, unmetered request is worse than a 503.
+    app.add_exception_handler(RedisError, fail_closed(RateLimiterUnavailable, "redis_unavailable"))
+    db_down = fail_closed(DatabaseUnavailable, "postgres_unavailable")
+    for db_error in (OperationalError, InterfaceError):
+        app.add_exception_handler(db_error, db_down)
     app.include_router(admin.router)
     app.include_router(health.router)
     authed = [Depends(require_principal)]

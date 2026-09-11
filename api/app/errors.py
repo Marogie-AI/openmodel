@@ -102,3 +102,24 @@ class ModelNotAllowed(ApiError):
 
     def __init__(self, name: str) -> None:
         super().__init__(f"Your plan does not include the model '{name}'.")
+
+
+class ServiceUnavailable(ApiError):
+    """A dependency this request needs is down. Fail closed: never serve unlimited or unmetered."""
+
+    status_code = 503
+    type = "server_error"
+
+
+class RateLimiterUnavailable(ServiceUnavailable):
+    code = "rate_limiter_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("Rate limiting is unavailable; the request was not served.")
+
+
+class DatabaseUnavailable(ServiceUnavailable):
+    code = "database_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("The database is unavailable; the request was not served.")
