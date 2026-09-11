@@ -1,0 +1,274 @@
+# openmodel-monitoring: default-deny, then exactly the scrape and control-plane
+# flows kube-prometheus-stack needs.
+#
+# Two things about this namespace are worth knowing before editing:
+#   * The pods here are chart-owned, so the selectors use the labels the chart
+#     actually sets (verified with `get pods --show-labels`), not ours.
+#   * Prometheus reaches the API server through the ClusterIP 10.96.0.1:443,
+#     which kube-proxy DNATs to the node at 172.22.0.2:6443. Calico evaluates
+#     policy after DNAT, so the node rule is the one that matters — the
+#     ClusterIP rule is kept as documentation and as insurance if the cluster
+#     is ever rebuilt with a different proxy mode.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: openmodel-monitoring
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: openmodel-monitoring
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # Any pod -> CoreDNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-egress
+  namespace: openmodel-monitoring
+spec:
+  # Everything here talks to the API server: Prometheus (service discovery),
+  # the operator (reconcile + watches), kube-state-metrics (its entire job),
+  # and Grafana's two sidecars (watching ConfigMaps for dashboards/datasources).
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 172.22.0.2/32
+      ports:
+        - port: 6443
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape-egress
+  namespace: openmodel-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes: [Egress]
+  egress:
+    # kubelet on the node: /metrics and /metrics/cadvisor — the source of every
+    # per-pod CPU/memory series the dashboard draws.
+    - to:
+        - ipBlock:
+            cidr: 172.22.0.2/32
+      ports:
+        - port: 10250
+          protocol: TCP
+    # In-namespace: kube-state-metrics (8080) and the operator's own metrics
+    # endpoint (10250, behind the 443 Service).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kube-state-metrics
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator
+      ports:
+        - port: 10250
+          protocol: TCP
+    # Grafana's own /metrics — the chart ships a ServiceMonitor for it.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 3000
+          protocol: TCP
+    # CoreDNS metrics (9153) — the DNS rule above only opens 53.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 9153
+          protocol: TCP
+    # api pods: /metrics on the serving port (ServiceMonitor lands in Task 2).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openmodel-api
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+    # postgres-exporter sidecar. The sidecar itself arrives in Task 2; the
+    # allow is here so the two land in the right files rather than the right
+    # order.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openmodel-data
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 9187
+          protocol: TCP
+    # Envoy data plane admin/metrics listener.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+          podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-name: openmodel
+      ports:
+        - port: 19001
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-ingress
+  namespace: openmodel-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes: [Ingress]
+  ingress:
+    # Grafana -> Prometheus (the provisioned datasource).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 9090
+          protocol: TCP
+    # `kubectl port-forward` arrives from the node, not from a pod: the kubelet
+    # opens the connection into the pod network on the host's behalf, so the
+    # source address is the node IP. Without this the forward connects and then
+    # hangs. Same reason as the Grafana rule below.
+    - from:
+        - ipBlock:
+            cidr: 172.22.0.2/32
+      ports:
+        - port: 9090
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana
+  namespace: openmodel-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # `kubectl port-forward` from the host (see above). Grafana is deliberately
+    # not exposed through the gateway.
+    - from:
+        - ipBlock:
+            cidr: 172.22.0.2/32
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Prometheus -> Grafana /metrics (chart-provided ServiceMonitor).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # Grafana -> Prometheus datasource. The sidecars' API-server access comes
+    # from allow-apiserver-egress.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-operator-ingress
+  namespace: openmodel-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator
+  policyTypes: [Ingress]
+  ingress:
+    # The API server calls the operator's admission webhook (PrometheusRule
+    # validation) on 10250, from the node.
+    - from:
+        - ipBlock:
+            cidr: 172.22.0.2/32
+      ports:
+        - port: 10250
+          protocol: TCP
+    # Prometheus scrapes the operator's metrics on the same port.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 10250
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-state-metrics-ingress
+  namespace: openmodel-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 8080
+          protocol: TCP

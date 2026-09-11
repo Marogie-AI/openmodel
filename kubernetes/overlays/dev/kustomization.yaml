@@ -24,3 +24,10 @@ secretGenerator:
     namespace: openmodel-api
     envs:
       - secrets/api-migrate.env
+  # Grafana reads this via `grafana.admin.existingSecret`. cluster-up.sh also
+  # creates it directly from the same file, because helm needs it to exist
+  # before the Grafana pod starts — which is earlier than `deploy.sh` runs.
+  - name: grafana-admin
+    namespace: openmodel-monitoring
+    envs:
+      - secrets/grafana.env

@@ -74,17 +74,31 @@ spec:
         - port: 10443
           protocol: TCP
     # Envoy Gateway controller -> proxy metrics (19001) and readiness (19003).
+    # Narrowed from the whole envoy-gateway-system namespace to the controller
+    # pod itself now that a second consumer (Prometheus) exists and the two
+    # should not share one blanket rule.
     # The kubelet's own probe to 19003 is host-network traffic, which Calico
     # does not subject to pod policy — verified: the proxy stays Ready without
     # a node-CIDR allow here.
     - from:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: envoy-gateway-system
+              control-plane: envoy-gateway
       ports:
         - port: 19001
           protocol: TCP
         - port: 19003
+          protocol: TCP
+    # Prometheus -> the proxy's metrics listener (PodMonitor lands in Task 2).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openmodel-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 19001
           protocol: TCP
   egress:
     # Proxy -> xDS config stream on the Envoy Gateway controller.

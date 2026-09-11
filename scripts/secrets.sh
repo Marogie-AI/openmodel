@@ -23,13 +23,25 @@ if [[ -e "$dir/api.env" ]] && grep -q '^OPENMODEL_DATABASE_OWNER_URL=' "$dir/api
   echo "moved OPENMODEL_DATABASE_OWNER_URL out of $dir/api.env into $dir/api-migrate.env"
 fi
 
+# hex, not base64: these end up inside DSNs where +/= would need escaping.
+gen() { openssl rand -hex 24; }
+
+# Grafana's admin login. Added in Phase 4 and generated independently of the
+# database secrets above, so an existing install gets it without --force (and
+# without rotating the passwords baked into the postgres data dir).
+if [[ ! -e "$dir/grafana.env" || "$force" == "--force" ]]; then
+  cat > "$dir/grafana.env" <<EOT
+admin-user=admin
+admin-password=$(gen)
+EOT
+  chmod 600 "$dir/grafana.env"
+  echo "wrote $dir/grafana.env"
+fi
+
 if [[ -e "$dir/postgres.env" || -e "$dir/api.env" ]] && [[ "$force" != "--force" ]]; then
   echo "secrets already exist in $dir (use --force to regenerate)"
   exit 0
 fi
-
-# hex, not base64: these end up inside DSNs where +/= would need escaping.
-gen() { openssl rand -hex 24; }
 owner="$(gen)" app="$(gen)"
 
 cat > "$dir/postgres.env" <<EOT
