@@ -169,7 +169,13 @@ spec:
               value: /home/ollama
             - name: OLLAMA_HOST
               value: http://ollama.openmodel-inference:11434
-          command: ["/bin/sh", "-c", "ollama pull qwen2.5:0.5b && ollama pull nomic-embed-text"]
+          # On a cold node the Job is scheduled before the server is ready, and
+          # each failed pull burns one of the 4 retries. `ollama list` is the
+          # readiness probe available here — the image ships no curl.
+          command:
+            - /bin/sh
+            - -c
+            - until ollama list >/dev/null 2>&1; do echo waiting for ollama; sleep 5; done && ollama pull qwen2.5:0.5b && ollama pull nomic-embed-text
           volumeMounts:
             - name: home
               mountPath: /home/ollama
