@@ -3,3 +3,23 @@ kind: Kustomization
 
 resources:
   - namespaces.yaml
+  - data/postgres.yaml
+  - data/redis.yaml
+
+# Stable ConfigMap names so the StatefulSet volume refs do not need editing.
+# Trade-off: no automatic rollout on config change — after editing these files
+# run `kubectl -n openmodel-data rollout restart statefulset/postgres`.
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  # Files under kubernetes/base/data are copies of api/sql/*, kept in sync by
+  # scripts/sync-sql.sh (kustomize cannot read outside its root).
+  - name: postgres-config
+    namespace: openmodel-data
+    files:
+      - data/postgresql.conf
+  - name: postgres-init
+    namespace: openmodel-data
+    files:
+      - data/01_roles.sh
