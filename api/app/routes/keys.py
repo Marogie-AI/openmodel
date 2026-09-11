@@ -35,6 +35,7 @@ async def create_key(principal: Caller, session: Session) -> KeyOut:
     session.add(key)
     await session.flush()
     await session.refresh(key)
+    await session.commit()
     return KeyOut(id=key.id, key=generated.raw, prefix=key.prefix, created_at=key.created_at)
 
 
@@ -60,5 +61,7 @@ async def revoke_key(key_id: UUID, principal: Caller, session: Session, request:
     if key is None or key.user_id != principal.user_id:
         raise NotFound(f"The key '{key_id}' does not exist.")
     key.revoked_at = datetime.now(UTC)
-    await session.flush()
+    # Commit before dropping the cache: dropping first lets a concurrent request re-cache the key
+    # from the not-yet-revoked row, and keep it usable for the whole TTL.
+    await session.commit()
     await drop_cached(request.app.state.redis, key.key_id)

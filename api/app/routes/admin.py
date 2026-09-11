@@ -93,6 +93,7 @@ async def create_org(body: OrgCreate, session: Session) -> OrgOut:
     session.add(org)
     await _flush(session, f"An organization named '{body.name}' already exists.")
     await session.refresh(org)
+    await session.commit()
     return OrgOut(id=org.id, name=org.name, plan_code=org.plan_code, created_at=org.created_at)
 
 
@@ -116,6 +117,7 @@ async def create_user(body: UserCreate, session: Session) -> UserOut:
     session.add(user)
     await _flush(session, f"A user with email '{body.email}' already exists.")
     await session.refresh(user)
+    await session.commit()
     return UserOut(
         id=user.id,
         organization_id=user.organization_id,
@@ -139,4 +141,5 @@ async def create_key(user_id: UUID, session: Session) -> KeyOut:
     session.add(key)
     await _flush(session, "That key already exists.")
     await session.refresh(key)
+    await session.commit()
     return KeyOut(id=key.id, key=generated.raw, prefix=key.prefix, created_at=key.created_at)

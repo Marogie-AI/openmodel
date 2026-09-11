@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.principal import cache_key, require_principal
 from app.db.session import get_session
 from app.main import create_app
-from app.ratelimit import slot_for
+from app.ratelimit import enforce, slot_for
 from tests.conftest import TEST_PRINCIPAL, TEST_REGISTRY, NoopSlot, client_for
 
 CHAT = {"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "hi"}]}
@@ -57,6 +57,32 @@ class DeadSession:
 
 def dead_sessionmaker(error: Exception) -> Callable[[], DeadSession]:
     return lambda: DeadSession(error)
+
+
+class UncommittableSession:
+    """Reads and writes land, then the commit fails — the case a teardown commit cannot report,
+    because by then the response has already been sent."""
+
+    async def __aenter__(self) -> "UncommittableSession":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def add(self, instance: object) -> None:
+        return None
+
+    async def flush(self) -> None:
+        return None
+
+    async def refresh(self, instance: object) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+    async def commit(self) -> None:
+        raise OperationalError("COMMIT", {}, Exception("server closed the connection"))
 
 
 # The ways Postgres goes away: the driver reports it (SQLAlchemy wraps), or the socket never
@@ -106,6 +132,19 @@ async def test_uncached_key_fails_closed_when_postgres_is_down(
     db_app.state.sessionmaker = dead_sessionmaker(error)
 
     response = await auth_client.get("/v1/models")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "database_unavailable"
+
+
+async def test_a_failed_commit_is_a_503_not_a_201() -> None:
+    """The key was never stored, so the caller must not be handed one."""
+    app = create_app(TEST_REGISTRY)
+    app.dependency_overrides[require_principal] = lambda: TEST_PRINCIPAL
+    app.dependency_overrides[enforce] = lambda: TEST_PRINCIPAL
+    async with app.router.lifespan_context(app), client_for(app) as client:
+        app.state.sessionmaker = UncommittableSession
+        response = await client.post("/api/keys")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "database_unavailable"

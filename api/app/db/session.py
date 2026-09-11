@@ -27,12 +27,16 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """Request-scoped session: commits on success, rolls back on exception."""
+    """Request-scoped session, rolled back on exception.
+
+    It does not commit: teardown runs after the response body is on the wire, so a commit that
+    failed here could no longer turn the 201 the client already read into a 503. Write handlers
+    commit themselves, before they build a response.
+    """
     sessionmaker: async_sessionmaker[AsyncSession] = request.app.state.sessionmaker
     async with sessionmaker() as session:
         try:
             yield session
-            await session.commit()
         except (ConnectionError, socket.gaierror) as exc:
             # SQLAlchemy only wraps errors the driver reports, and it never sees these: a
             # failure to open the socket comes through raw from asyncpg. Not the OSError base,
