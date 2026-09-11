@@ -1,8 +1,15 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
+import redis.asyncio as aioredis
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+from app.db.session import make_engine, make_sessionmaker
 from app.main import create_app
 from app.router import ModelSpec, Registry
 
@@ -32,3 +39,74 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
 async def client() -> AsyncIterator[AsyncClient]:
     async for c in make_client(TEST_REGISTRY):
         yield c
+
+
+async def db_available() -> bool:
+    """True when the compose postgres accepts a connection from the app role."""
+    engine = make_engine(settings.database_url)
+    try:
+        conn = await asyncio.wait_for(engine.connect(), timeout=1)
+        await conn.close()
+        return True
+    except Exception:
+        return False
+    finally:
+        await engine.dispose()
+
+
+async def redis_available() -> bool:
+    """True when the compose redis answers PING."""
+    client = aioredis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1)
+    try:
+        await asyncio.wait_for(client.ping(), timeout=1)
+    except Exception:
+        return False
+    finally:
+        await client.aclose()
+    return True
+
+
+_services_up: bool | None = None
+
+
+@pytest.fixture(autouse=True)
+async def skip_without_services(request: pytest.FixtureRequest) -> None:
+    """Skip tests marked `db` when postgres/redis are not reachable (probed once)."""
+    if request.node.get_closest_marker("db") is None:
+        return
+    global _services_up
+    if _services_up is None:
+        _services_up = await db_available() and await redis_available()
+    if not _services_up:
+        pytest.skip("postgres/redis not reachable")
+
+
+TABLES = "plan_model, request, api_key, app_user, organization, plan"
+
+
+@pytest.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    """Owner session on an empty database."""
+    engine = make_engine(settings.database_owner_url)
+    sessionmaker = make_sessionmaker(engine)
+    async with sessionmaker() as s:
+        try:
+            await s.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
+        except ProgrammingError:
+            # Task 2 creates the tables; drop this guard then (and re-seed plans).
+            await s.rollback()
+        else:
+            await s.commit()
+        yield s
+    await engine.dispose()
+
+
+@pytest.fixture
+async def redis_client() -> AsyncIterator[aioredis.Redis]:
+    """Redis client on an empty database."""
+    client: aioredis.Redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    await client.flushdb()
+    try:
+        yield client
+    finally:
+        await client.aclose()

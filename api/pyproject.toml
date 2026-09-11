@@ -44,5 +44,8 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-markers = ["e2e: needs running compose stack"]
+markers = [
+    "e2e: needs running compose stack",
+    "db: needs postgres and redis from compose",
+]
 addopts = "-m 'not e2e'"
