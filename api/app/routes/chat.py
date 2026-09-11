@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.auth.principal import Principal
+from app.errors import ApiError
 from app.metrics import observe_ttft, record_usage, track
 from app.ratelimit import ConcurrencySlot, enforce, slot_for
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
@@ -20,6 +21,7 @@ from app.schemas.chat import (
     UsageOut,
 )
 from app.sse import sse
+from app.usage import record_for, schedule
 
 router = APIRouter()
 
@@ -31,6 +33,7 @@ async def chat_completions(
     principal: Annotated[Principal, Depends(enforce)],
     slot: Annotated[ConcurrencySlot, Depends(slot_for)],
 ) -> ChatCompletion | StreamingResponse:
+    entered = time.perf_counter()
     backend = backend_for(request, body.model, "chat", principal)
     messages = [message.model_dump() for message in body.messages]
     options = options_from(body.temperature, body.top_p, body.max_tokens)
@@ -68,6 +71,7 @@ async def chat_completions(
                 event,
                 body.model,
                 "chat",
+                principal.api_key_id,
                 prelude=chunk({"role": "assistant", "content": ""}),
                 slot=slot,
             ),
@@ -77,9 +81,20 @@ async def chat_completions(
 
     async with slot, track(body.model, "chat"):
         start = time.perf_counter()
-        result: ChatResult = await backend.chat(body.model, messages, options)
+        try:
+            result: ChatResult = await backend.chat(body.model, messages, options)
+        except ApiError as exc:
+            schedule(
+                request,
+                record_for(principal.api_key_id, body.model, "chat", entered, exc.status_code),
+            )
+            raise
         observe_ttft(body.model, time.perf_counter() - start)
         record_usage(body.model, result.usage)
+        schedule(
+            request,
+            record_for(principal.api_key_id, body.model, "chat", entered, 200, result.usage),
+        )
     return ChatCompletion(
         id=completion_id,
         created=created,

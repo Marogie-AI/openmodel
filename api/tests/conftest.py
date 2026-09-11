@@ -20,6 +20,10 @@ from app.db.session import make_engine, make_sessionmaker
 from app.main import create_app
 from app.ratelimit import ConcurrencySlot, enforce, slot_for
 from app.router import ModelSpec, Registry
+from app.usage import UsageRecord
+
+# Filled by the stub sink `make_client` installs, cleared per client.
+USAGE_RECORDS: list[UsageRecord] = []
 
 BACKEND_URL = "http://ollama.test:11434"
 
@@ -68,10 +72,13 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
     # through `auth_client` against the real Redis.
     app.dependency_overrides[enforce] = lambda: TEST_PRINCIPAL
     app.dependency_overrides[slot_for] = NoopSlot
+    USAGE_RECORDS.clear()
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
     ):
+        # The lifespan installed the real background writer; these tests have no database.
+        app.state.usage_sink = USAGE_RECORDS.append
         yield client
 
 
@@ -79,6 +86,12 @@ async def make_client(registry: Registry) -> AsyncIterator[AsyncClient]:
 async def client() -> AsyncIterator[AsyncClient]:
     async for c in make_client(TEST_REGISTRY):
         yield c
+
+
+@pytest.fixture
+def usage_records(client: AsyncClient) -> list[UsageRecord]:
+    """Usage records the routes handed to the sink, in order."""
+    return USAGE_RECORDS
 
 
 ADMIN_HEADERS = {"X-Admin-Token": settings.admin_token}

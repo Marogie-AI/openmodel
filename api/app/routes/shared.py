@@ -1,6 +1,7 @@
 import contextlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from uuid import UUID
 
 from fastapi import Request
 
@@ -10,8 +11,9 @@ from app.errors import ApiError, ModelNotAllowed
 from app.metrics import observe_ttft, record_usage, track
 from app.ratelimit import ConcurrencySlot
 from app.router import Capability, Registry
-from app.schemas.backend import ChatDelta
+from app.schemas.backend import ChatDelta, Usage
 from app.sse import DONE, error_event
+from app.usage import record_for, schedule
 
 STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -48,6 +50,7 @@ async def stream_events(
     chunk: ChunkFactory,
     model: str,
     endpoint: str,
+    api_key_id: UUID,
     prelude: bytes | None = None,
     slot: ConcurrencySlot | None = None,
 ) -> AsyncIterator[bytes]:
@@ -55,6 +58,9 @@ async def stream_events(
     async with track(model, endpoint) as tracked:
         start = time.perf_counter()
         first_token = True
+        # A generator abandoned before the stream ends is a client that hung up: 499.
+        status = 499
+        usage: Usage | None = None
         try:
             if prelude is not None:
                 yield prelude
@@ -71,12 +77,16 @@ async def stream_events(
                     if delta.done:
                         if delta.usage is not None:
                             record_usage(model, delta.usage)
+                            usage = delta.usage
                         yield chunk("", delta)
+            status = 200
         except ApiError as exc:
             # The error is delivered in-stream rather than raised, so count it here.
+            status = exc.status_code
             tracked.failed()
             yield error_event(exc)
         finally:
+            schedule(request, record_for(api_key_id, model, endpoint, start, status, usage))
             # Completion, disconnect, error or an abandoned generator: the slot goes back.
             if slot is not None:
                 await slot.release()

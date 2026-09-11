@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.auth.principal import Principal
-from app.errors import PromptListUnsupported
+from app.errors import ApiError, PromptListUnsupported
 from app.metrics import observe_ttft, record_usage, track
 from app.ratelimit import ConcurrencySlot, enforce, slot_for
 from app.routes.shared import STREAM_HEADERS, backend_for, options_from, stream_events
@@ -14,6 +14,7 @@ from app.schemas.backend import ChatDelta, ChatResult
 from app.schemas.chat import UsageOut
 from app.schemas.completions import Completion, CompletionChoice, CompletionRequest
 from app.sse import sse
+from app.usage import record_for, schedule
 
 router = APIRouter()
 
@@ -33,6 +34,7 @@ async def completions(
     principal: Annotated[Principal, Depends(enforce)],
     slot: Annotated[ConcurrencySlot, Depends(slot_for)],
 ) -> Completion | StreamingResponse:
+    entered = time.perf_counter()
     backend = backend_for(request, body.model, "completion", principal)
     prompt = _prompt(body.prompt)
     options = options_from(body.temperature, body.top_p, body.max_tokens)
@@ -62,6 +64,7 @@ async def completions(
                 event,
                 body.model,
                 "completion",
+                principal.api_key_id,
                 slot=slot,
             ),
             media_type="text/event-stream",
@@ -70,9 +73,22 @@ async def completions(
 
     async with slot, track(body.model, "completion"):
         start = time.perf_counter()
-        result: ChatResult = await backend.generate(body.model, prompt, options)
+        try:
+            result: ChatResult = await backend.generate(body.model, prompt, options)
+        except ApiError as exc:
+            schedule(
+                request,
+                record_for(
+                    principal.api_key_id, body.model, "completion", entered, exc.status_code
+                ),
+            )
+            raise
         observe_ttft(body.model, time.perf_counter() - start)
         record_usage(body.model, result.usage)
+        schedule(
+            request,
+            record_for(principal.api_key_id, body.model, "completion", entered, 200, result.usage),
+        )
     return completion(
         CompletionChoice(text=result.content, finish_reason=result.finish_reason),
         UsageOut.of(result.usage),
