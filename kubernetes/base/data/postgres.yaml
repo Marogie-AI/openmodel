@@ -123,14 +123,18 @@ spec:
         # read-only openmodel_monitor role (pg_monitor), so no network exposure
         # and no write privileges. Note: 01_roles.sh only runs on an empty data
         # dir, so on an already-initialised cluster the role must be created by
-        # hand once, as the superuser:
+        # hand once, as the superuser. The password is the `monitor-password`
+        # key of kubernetes/overlays/dev/secrets/postgres.env — read it into a
+        # shell variable, never paste it into a command line or a terminal:
         #   CREATE ROLE openmodel_monitor LOGIN PASSWORD '<monitor-password>';
         #   GRANT pg_monitor TO openmodel_monitor;
         - name: postgres-exporter
           image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
-          # pg_stat_statements is loaded by postgresql.conf; its collector is
-          # off by default in the exporter.
-          args: ["--collector.stat_statements"]
+          # No --collector.stat_statements: it emits five series per queryid
+          # (420 on an idle cluster) and grows without bound. pg_stat_statements
+          # is still loaded by postgresql.conf — query it directly when needed:
+          #   select query, calls, total_exec_time from pg_stat_statements
+          #   order by total_exec_time desc limit 20;
           ports:
             - name: metrics
               containerPort: 9187

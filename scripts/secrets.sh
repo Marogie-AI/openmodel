@@ -40,8 +40,9 @@ fi
 
 # The postgres-exporter's read-only role. Added in Phase 4: append it to an
 # existing postgres.env rather than regenerating the file, whose other
-# passwords are already baked into the postgres data dir. Idempotent.
-if [[ -e "$dir/postgres.env" ]] && ! grep -q '^monitor-password=' "$dir/postgres.env"; then
+# passwords are already baked into the postgres data dir. Idempotent, and
+# skipped under --force, which rewrites the whole file below anyway.
+if [[ "$force" != "--force" && -e "$dir/postgres.env" ]] && ! grep -q '^monitor-password=' "$dir/postgres.env"; then
   echo "monitor-password=$(gen)" >> "$dir/postgres.env"
   echo "appended monitor-password to $dir/postgres.env"
 fi
