@@ -15,7 +15,7 @@ from app.errors import ApiError, InvalidRequest, envelope
 from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware
 from app.router import Registry
-from app.routes import admin, chat, completions, embeddings, health, metrics, models
+from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models
 
 
 @asynccontextmanager
@@ -77,6 +77,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(chat.router, dependencies=authed)
     app.include_router(completions.router, dependencies=authed)
     app.include_router(embeddings.router, dependencies=authed)
+    app.include_router(keys.router, dependencies=authed)
     app.include_router(metrics.router)
     return app
 
