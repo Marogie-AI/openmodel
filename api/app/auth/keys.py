@@ -1,0 +1,45 @@
+"""API key material: generation, parsing, and peppered argon2id hashing of the secret."""
+
+import re
+import secrets
+from dataclasses import dataclass
+
+import argon2
+from argon2.exceptions import InvalidHashError, VerificationError
+
+KEY_RE = re.compile(r"^om_[a-z]+_([A-Za-z0-9_-]{12})_([A-Za-z0-9_-]{32})$")
+
+_hasher = argon2.PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
+
+
+@dataclass(frozen=True)
+class GeneratedKey:
+    raw: str
+    key_id: str
+    secret: str
+    prefix: str
+
+
+def generate_key(env: str) -> GeneratedKey:
+    key_id = secrets.token_urlsafe(9)
+    secret = secrets.token_urlsafe(24)
+    prefix = f"om_{env}_{key_id}"
+    return GeneratedKey(raw=f"{prefix}_{secret}", key_id=key_id, secret=secret, prefix=prefix)
+
+
+def parse_key(raw: str) -> tuple[str, str] | None:
+    """(key_id, secret), or None when `raw` is not a well-formed key."""
+    match = KEY_RE.match(raw)
+    return None if match is None else (match.group(1), match.group(2))
+
+
+def hash_secret(secret: str, pepper: str) -> str:
+    return _hasher.hash(secret + pepper)
+
+
+def verify_secret(secret_hash: str, secret: str, pepper: str) -> bool:
+    """Constant-time-ish verify that never raises: a bad hash or secret is just False."""
+    try:
+        return _hasher.verify(secret_hash, secret + pepper)
+    except (VerificationError, InvalidHashError):
+        return False
