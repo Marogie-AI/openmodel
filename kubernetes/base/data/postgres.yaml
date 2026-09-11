@@ -19,6 +19,11 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
+    # Scraped by the `postgres` ServiceMonitor. Headless is fine: the operator
+    # builds targets from the Endpoints, not from the (absent) cluster IP.
+    - name: metrics
+      port: 9187
+      targetPort: metrics
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -72,6 +77,11 @@ spec:
                 secretKeyRef:
                   name: postgres-credentials
                   key: app-password
+            - name: MONITOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: monitor-password
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql
@@ -109,6 +119,52 @@ spec:
             # readOnlyRootFilesystem is off: the entrypoint writes /tmp sockets,
             # /var/run/postgresql and the initdb staging area on the root fs.
             readOnlyRootFilesystem: false
+        # Prometheus exporter sidecar. Connects over the pod's loopback as the
+        # read-only openmodel_monitor role (pg_monitor), so no network exposure
+        # and no write privileges. Note: 01_roles.sh only runs on an empty data
+        # dir, so on an already-initialised cluster the role must be created by
+        # hand once, as the superuser:
+        #   CREATE ROLE openmodel_monitor LOGIN PASSWORD '<monitor-password>';
+        #   GRANT pg_monitor TO openmodel_monitor;
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+          # pg_stat_statements is loaded by postgresql.conf; its collector is
+          # off by default in the exporter.
+          args: ["--collector.stat_statements"]
+          ports:
+            - name: metrics
+              containerPort: 9187
+          env:
+            - name: DATA_SOURCE_URI
+              value: localhost:5432/openmodel?sslmode=disable
+            - name: DATA_SOURCE_USER
+              value: openmodel_monitor
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: monitor-password
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            # nobody: the exporter is a static binary that needs no home dir.
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       volumes:
         - name: config
           configMap:

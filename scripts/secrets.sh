@@ -38,6 +38,14 @@ EOT
   echo "wrote $dir/grafana.env"
 fi
 
+# The postgres-exporter's read-only role. Added in Phase 4: append it to an
+# existing postgres.env rather than regenerating the file, whose other
+# passwords are already baked into the postgres data dir. Idempotent.
+if [[ -e "$dir/postgres.env" ]] && ! grep -q '^monitor-password=' "$dir/postgres.env"; then
+  echo "monitor-password=$(gen)" >> "$dir/postgres.env"
+  echo "appended monitor-password to $dir/postgres.env"
+fi
+
 if [[ -e "$dir/postgres.env" || -e "$dir/api.env" ]] && [[ "$force" != "--force" ]]; then
   echo "secrets already exist in $dir (use --force to regenerate)"
   exit 0
@@ -48,6 +56,7 @@ cat > "$dir/postgres.env" <<EOT
 superuser-password=$(gen)
 owner-password=$owner
 app-password=$app
+monitor-password=$(gen)
 EOT
 
 cat > "$dir/api.env" <<EOT

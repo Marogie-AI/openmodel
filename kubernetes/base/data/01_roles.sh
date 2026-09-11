@@ -7,10 +7,16 @@ set -euo pipefail
 
 : "${OWNER_PASSWORD:=owner}"
 : "${APP_PASSWORD:=app}"
+: "${MONITOR_PASSWORD:=monitor}"
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname openmodel <<-EOSQL
 	CREATE ROLE openmodel_owner LOGIN PASSWORD '${OWNER_PASSWORD}';
 	CREATE ROLE openmodel_app LOGIN PASSWORD '${APP_PASSWORD}';
+	-- Read-only metrics role for the postgres-exporter sidecar. pg_monitor is a
+	-- built-in role: pg_stat_* views (incl. pg_stat_statements) without any DML.
+	CREATE ROLE openmodel_monitor LOGIN PASSWORD '${MONITOR_PASSWORD}';
+	GRANT pg_monitor TO openmodel_monitor;
+	GRANT CONNECT ON DATABASE openmodel TO openmodel_monitor;
 	ALTER DATABASE openmodel OWNER TO openmodel_owner;
 	GRANT CONNECT ON DATABASE openmodel TO openmodel_app;
 	\c openmodel
