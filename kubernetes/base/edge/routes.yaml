@@ -30,6 +30,11 @@ spec:
         - path:
             type: PathPrefix
             value: /admin
+        # The console is served by the API pod itself, deliberately same-origin
+        # with the API — which is why the app carries no CORS middleware.
+        - path:
+            type: PathPrefix
+            value: /app
         - path:
             type: Exact
             value: /health

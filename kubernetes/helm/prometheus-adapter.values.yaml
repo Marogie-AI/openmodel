@@ -17,7 +17,7 @@ rules:
   # metric — noise we never query, and a relist cost on an 8GB dev cluster.
   default: false
   custom:
-    # `llm_inflight` is a gauge from api/app/metrics.py; the ServiceMonitor's
+    # `llm_inflight` is a gauge from apps/backend/app/metrics.py; the ServiceMonitor's
     # target labels add `namespace` and `pod`. Both must be non-empty for the
     # adapter to map a series onto a Pod object.
     - seriesQuery: 'llm_inflight{namespace!="",pod!=""}'

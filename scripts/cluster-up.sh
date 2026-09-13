@@ -81,18 +81,18 @@ helm repo update prometheus-community metrics-server
 
 helm upgrade --install kps prometheus-community/kube-prometheus-stack \
   --version "$KUBE_PROMETHEUS_STACK_VERSION" -n openmodel-monitoring \
-  -f "$REPO_ROOT/monitoring/kube-prometheus-stack.values.yaml" --wait --timeout 10m
+  -f "$REPO_ROOT/kubernetes/helm/kube-prometheus-stack.values.yaml" --wait --timeout 10m
 
 helm upgrade --install metrics-server metrics-server/metrics-server \
   --version "$METRICS_SERVER_VERSION" -n kube-system \
-  -f "$REPO_ROOT/monitoring/metrics-server.values.yaml" --wait --timeout 5m
+  -f "$REPO_ROOT/kubernetes/helm/metrics-server.values.yaml" --wait --timeout 5m
 
 # prometheus-adapter serves custom.metrics.k8s.io (llm_inflight) for the api
 # HPA. It goes after kps because it needs the Prometheus Service to exist to
 # pass its own readiness probe under --wait.
 helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
   --version "$PROMETHEUS_ADAPTER_VERSION" -n openmodel-monitoring \
-  -f "$REPO_ROOT/monitoring/prometheus-adapter.values.yaml" --wait --timeout 5m
+  -f "$REPO_ROOT/kubernetes/helm/prometheus-adapter.values.yaml" --wait --timeout 5m
 
 # Two policy files hardcode this environment's addressing: inference.yaml carves
 # the node's own network out of 0.0.0.0/0 by CIDR, and monitoring.yaml allows the

@@ -84,7 +84,7 @@ acceptance suite runs through the gateway the same way:
 ```sh
 ADMIN_TOKEN=$(grep '^OPENMODEL_ADMIN_TOKEN=' kubernetes/overlays/dev/secrets/api.env | cut -d= -f2)
 
-cd api && OPENMODEL_BASE_URL=https://api.openmodel.test/v1 \
+cd apps/backend && OPENMODEL_BASE_URL=https://api.openmodel.test/v1 \
   OPENMODEL_INSECURE_TLS=1 OPENMODEL_ADMIN_TOKEN="$ADMIN_TOKEN" uv run pytest -m e2e
 ```
 

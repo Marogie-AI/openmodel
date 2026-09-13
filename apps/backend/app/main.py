@@ -9,6 +9,7 @@ import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from redis.exceptions import RedisError
 from sqlalchemy.exc import InterfaceError, OperationalError
 
@@ -29,7 +30,18 @@ from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware, llm_inflight
 from app.ratelimit import enforce
 from app.router import Registry
-from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models, usage
+from app.routes import (
+    admin,
+    chat,
+    completions,
+    embeddings,
+    health,
+    keys,
+    me,
+    metrics,
+    models,
+    usage,
+)
 from app.usage import schedule_write
 
 log = structlog.get_logger()
@@ -146,6 +158,8 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     authed = [Depends(require_principal)]
     limited = [Depends(enforce)]
     app.include_router(models.router, dependencies=authed)
+    # Authed, not limited: the console calls it to validate a key, which must not cost a token.
+    app.include_router(me.router, dependencies=authed)
     app.include_router(chat.router, dependencies=limited)
     app.include_router(completions.router, dependencies=limited)
     app.include_router(embeddings.router, dependencies=limited)
@@ -153,6 +167,10 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(keys.router, dependencies=limited)
     app.include_router(usage.router, dependencies=authed)
     app.include_router(metrics.router)
+    # Conditional: only the image has a bundle, so the tests and a bare local uvicorn run
+    # without one. html=True is the whole SPA story — the console uses no client-side router.
+    if settings.console_dir.is_dir():
+        app.mount("/app", StaticFiles(directory=settings.console_dir, html=True), name="console")
     return app
 
 

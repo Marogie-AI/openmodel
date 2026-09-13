@@ -7,11 +7,9 @@ CLUSTER=openmodel
 IMAGE=openmodel-api:dev
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "==> checking kubernetes/base/data is in sync with api/sql"
-"$REPO_ROOT/scripts/sync-sql.sh" --check
 
 echo "==> building $IMAGE"
-docker build -t "$IMAGE" "$REPO_ROOT/api"
+docker build -f "$REPO_ROOT/apps/backend/Dockerfile" -t "$IMAGE" "$REPO_ROOT"
 
 echo "==> loading $IMAGE into kind cluster '$CLUSTER'"
 kind load docker-image "$IMAGE" --name "$CLUSTER"
