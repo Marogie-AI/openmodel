@@ -1,11 +1,11 @@
 {
-  "venvPath": "api",
+  "venvPath": "apps/backend",
   "venv": ".venv",
   "pythonVersion": "3.12",
-  "include": ["api/app", "api/tests", "api/alembic"],
+  "include": ["apps/backend/app", "apps/backend/tests", "apps/backend/alembic"],
   "exclude": ["**/.venv", "**/__pycache__"],
   "executionEnvironments": [
-    { "root": "api", "extraPaths": ["api"] }
+    { "root": "apps/backend", "extraPaths": ["apps/backend"] }
   ],
   "typeCheckingMode": "standard"
 }

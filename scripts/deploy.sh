@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 
 echo "==> building $IMAGE"
-docker build -f "$REPO_ROOT/api/Dockerfile" -t "$IMAGE" "$REPO_ROOT"
+docker build -f "$REPO_ROOT/apps/backend/Dockerfile" -t "$IMAGE" "$REPO_ROOT"
 
 echo "==> loading $IMAGE into kind cluster '$CLUSTER'"
 kind load docker-image "$IMAGE" --name "$CLUSTER"

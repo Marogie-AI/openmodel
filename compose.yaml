@@ -49,7 +49,7 @@ services:
   migrate:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: apps/backend/Dockerfile
     command: ["alembic", "upgrade", "head"]
     environment:
       OPENMODEL_DATABASE_OWNER_URL: postgresql+asyncpg://openmodel_owner:owner@postgres:5432/openmodel
@@ -61,7 +61,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: apps/backend/Dockerfile
     ports:
       - "${OPENMODEL_HOST_PORT:-8000}:8000"
     environment:
@@ -70,7 +70,7 @@ services:
       OPENMODEL_DATABASE_OWNER_URL: postgresql+asyncpg://openmodel_owner:owner@postgres:5432/openmodel
       OPENMODEL_REDIS_URL: redis://redis:6379/0
     volumes:
-      - ./api/models.compose.yaml:/app/models.compose.yaml:ro
+      - ./apps/backend/models.compose.yaml:/app/models.compose.yaml:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
