@@ -1,12 +1,17 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, request } from "../api/client";
+import { ApiError, request, type RateLimit } from "../api/client";
 import { streamChat } from "../api/stream";
-import type { ChatCompletion, ChatMessage, ModelList } from "../api/types";
+import type {
+  ChatCompletion,
+  ChatCompletionChunk,
+  ChatMessage,
+  ModelList,
+} from "../api/types";
 import { useSession } from "../auth/session";
 
 /** What the footer under a finished exchange reports. */
-interface CallFacts {
+export interface CallFacts {
   promptTokens?: number;
   completionTokens?: number;
   latencyMs: number;
@@ -14,6 +19,40 @@ interface CallFacts {
   limit?: number;
   requestId?: string;
   finishReason?: string;
+}
+
+/**
+ * Facts for a streamed exchange, or null while it is still mid-stream.
+ *
+ * Chunks are serialized with `exclude_none=True`, so `usage` and `finish_reason`
+ * are absent on intermediate chunks. Comparing them with `!==` against null
+ * treats `undefined` as present and reads a property off it — and because this
+ * runs inside a `setState` updater, the resulting TypeError surfaces as a render
+ * error that unmounts the whole app.
+ */
+export function factsFrom(
+  chunk: ChatCompletionChunk,
+  latencyMs: number,
+  head: { rateLimit?: RateLimit; requestId?: string },
+): CallFacts | null {
+  const choice = chunk.choices[0];
+  const usage = chunk.usage;
+  const finishReason = choice?.finish_reason;
+  if (finishReason == null && usage == null) return null;
+
+  return {
+    latencyMs,
+    ...(usage != null && {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+    }),
+    ...(finishReason != null && { finishReason }),
+    ...(head.rateLimit !== undefined && {
+      remaining: head.rateLimit.remaining,
+      limit: head.rateLimit.limit,
+    }),
+    ...(head.requestId !== undefined && { requestId: head.requestId }),
+  };
 }
 
 interface Exchange {
@@ -83,29 +122,12 @@ export default function Chat() {
             patch((current) => ({ ...current, error: { message: event_.error.message } }));
             continue;
           }
-          const choice = event_.chunk.choices[0];
-          const piece = choice?.delta.content ?? "";
-          const usage = event_.chunk.usage;
+          const piece = event_.chunk.choices[0]?.delta.content ?? "";
+          const facts = factsFrom(event_.chunk, Math.round(performance.now() - started), start);
           patch((current) => ({
             ...current,
             received: current.received + piece,
-            ...(choice?.finish_reason != null || usage !== null
-              ? {
-                  facts: {
-                    latencyMs: Math.round(performance.now() - started),
-                    ...(usage !== null && {
-                      promptTokens: usage.prompt_tokens,
-                      completionTokens: usage.completion_tokens,
-                    }),
-                    ...(choice?.finish_reason != null && { finishReason: choice.finish_reason }),
-                    ...(start.rateLimit !== undefined && {
-                      remaining: start.rateLimit.remaining,
-                      limit: start.rateLimit.limit,
-                    }),
-                    ...(start.requestId !== undefined && { requestId: start.requestId }),
-                  },
-                }
-              : {}),
+            ...(facts !== null && { facts }),
           }));
         }
       } else {

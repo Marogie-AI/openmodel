@@ -107,10 +107,13 @@ export interface ChatCompletion {
   usage: UsageOut;
 }
 
+// Chunks are serialized with `exclude_none=True` (api/app/routes/chat.py), so
+// `finish_reason` and `usage` are ABSENT on intermediate chunks rather than
+// null. Optional, not nullable — test them with `!= null`, never `!== null`.
 export interface ChunkChoice {
   index: number;
   delta: { role?: string; content?: string };
-  finish_reason: string | null;
+  finish_reason?: string | null;
 }
 
 export interface ChatCompletionChunk {
@@ -119,5 +122,5 @@ export interface ChatCompletionChunk {
   created: number;
   model: string;
   choices: ChunkChoice[];
-  usage: UsageOut | null;
+  usage?: UsageOut | null;
 }
