@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Chat from "./tabs/Chat";
 import Setup from "./tabs/Setup";
 
 // No router: the console is mounted as static files at /app with html=True, and
@@ -27,7 +28,13 @@ export default function App() {
           ))}
         </nav>
       </header>
-      <main>{tab === "Setup" ? <Setup /> : <p className="muted">{tab} is coming in the next task.</p>}</main>
+      <main>
+        {tab === "Setup" && <Setup />}
+        {tab === "Chat" && <Chat />}
+        {(tab === "Keys" || tab === "Usage" || tab === "Admin") && (
+          <p className="muted">{tab} is coming in the next task.</p>
+        )}
+      </main>
     </div>
   );
 }
