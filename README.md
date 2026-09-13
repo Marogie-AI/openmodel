@@ -178,6 +178,84 @@ the kubelet starts timing out liveness probes.
 
 Compose alone, without Kubernetes, runs comfortably in about 2 GB.
 
+## As a product
+
+The shape of this is a self-hosted, OpenAI-compatible gateway with tenants,
+quotas and metering. That is the substrate of a real product category: companies
+that want their staff using a chat assistant but cannot send prompts to a US API,
+either because of GDPR, a works council, a sector regulator, or a customer
+contract that forbids it. Self-hosting is the whole pitch, because there is no
+data transfer to disclose and no sub-processor to justify.
+
+### Hosting it
+
+Everything except the models is small. Two API pods request 128 Mi each; the
+expensive half is inference. Check current prices, these move.
+
+| Host | Roughly | Runs |
+|---|---|---|
+| Hetzner CAX11, 2 vCPU / 4 GB ARM | €3/mo | Compose, plus the 0.5B models |
+| Hetzner CAX21, 4 vCPU / 8 GB ARM | €7/mo | Adds a 7B model at 4-bit, slowly |
+| Hetzner CPX41, 8 vCPU / 16 GB | €25/mo | Comfortable, k3s if you want Kubernetes |
+| Hetzner GPU server | €200+/mo | A 7B model at conversational speed |
+
+Hetzner is in Nuremberg and Falkenstein, which is the point if the reason you are
+self-hosting is that the data must stay in Germany. Skip Kubernetes on the small
+boxes: a k3s control plane wants about a gigabyte before your app starts, which
+is a third of the cheap machine. Keep kind on a laptop for learning and run
+Compose in production until you have a second node to schedule onto.
+
+### Adding models
+
+One manifest and one pull. A model is a name, a backend URL and a list of
+capabilities in the registry, plus an entry in whichever plans may use it:
+
+```yaml
+- name: mistral:7b
+  backend_url: http://ollama-mistral.openmodel-inference:11434
+  capabilities: [chat, completion]
+```
+
+Small Qwen is weak in German. Mistral's models are genuinely good at it, and
+there are German-tuned open models, including the EU-funded Teuken line that was
+trained across European languages rather than English-first. Check current Ollama
+tags before planning around a specific one.
+
+Pointing a model at a hosted provider instead needs one piece of code that does
+not exist yet: the backend client speaks Ollama's protocol, and providers like
+Mistral, IONOS or Scaleway speak the OpenAI one. That second backend class is
+maybe eighty lines, and it is what turns the model router into something that can
+mix a cheap local model with a good hosted one behind a single key and a single
+usage table.
+
+### What a buyer would already be paying for
+
+- Tenants, users and API keys, with argon2id hashing and one-time secret display
+- Per-organization request limits and concurrency caps, enforced atomically in Redis
+- Plans that gate which models a tenant may call
+- Usage recorded per organization, user and model, which is the substrate of an invoice
+- OpenAI compatibility, so existing customer code works by changing one URL
+- A console non-technical staff can use without a terminal
+- Metrics, alerts and autoscaling on real queue depth rather than CPU
+
+### What is missing before you could charge for it
+
+This is the honest list, and it is longer than the list above.
+
+- **Single sign-on.** No SAML or OIDC. Enterprises will not create accounts by hand, and this has no login at all: a key is the only identity.
+- **Chat history.** Conversations are not persisted. Close the tab and the thread is gone, which no user expects from a chat product.
+- **Audit log.** Usage rows record volume, not actions. There is no immutable record of who did what, which is the first thing a compliance review asks for.
+- **Roles.** Any key can mint keys for its own user. There is no tenant administrator, no read-only role, no per-role model access.
+- **Billing.** Usage is counted but never priced, invoiced or capped by spend.
+- **Retrieval.** No document upload, no search over company data. "Chat with our handbook" is usually the actual thing being bought.
+- **Backups.** Point-in-time recovery is off and there is no restore drill. A dev stack losing a volume is an inconvenience; a customer's data is not.
+- **High availability.** One node, one Postgres, one Redis, and each model behind a single pod on a volume only one node can mount.
+- **The UI.** Functional, deliberately plain, and no more than that. No conversation list, no markdown rendering, no code highlighting, no mobile layout, no accessibility pass, no branding.
+- **The paperwork.** A data processing agreement, a sub-processor list, and whatever certification the buyer's procurement team asks for.
+
+None of that is exotic, and the architecture does not fight any of it. It is
+simply the distance between a platform that works and a product someone renews.
+
 ## Phases
 
 | # | Phase | Delivers |
