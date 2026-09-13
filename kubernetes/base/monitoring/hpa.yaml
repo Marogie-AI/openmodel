@@ -47,6 +47,9 @@ spec:
       # No stabilization: a burst of streams is the signal, and waiting out a
       # window means serving it entirely from the pods that are already full.
       stabilizationWindowSeconds: 0
+      # No `policies` here, so the controller's defaults apply: 4 pods or 100% of
+      # the current count, whichever is more, every 15s. From min 2 that reaches
+      # max 10 in two steps, so maxReplicas binds before the rate ever does.
     scaleDown:
       # 60s rather than the 300s default — deliberately short so the scale drill
       # finishes in one sitting. Raise it for anything real: an idle gap between

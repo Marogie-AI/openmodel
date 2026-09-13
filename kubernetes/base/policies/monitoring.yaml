@@ -4,15 +4,30 @@
 # Two things about this namespace are worth knowing before editing:
 #   * The pods here are chart-owned, so the selectors use the labels the chart
 #     actually sets (verified with `get pods --show-labels`), not ours.
-#   * 172.22.0.2/32 — the node IP — appears in five rules below and is
-#     ENVIRONMENT-SPECIFIC: Docker does not hand every machine the same `kind`
-#     bridge subnet. Check it with `kubectl get nodes -o wide` (scripts/
-#     cluster-up.sh also prints the bridge CIDR on every run) and update these
-#     rules if it differs, or port-forward and the kubelet scrape will hang.
-#   * Prometheus reaches the API server through the ClusterIP 10.96.0.1:443,
-#     which kube-proxy DNATs to the node at 172.22.0.2:6443. Calico evaluates
-#     policy after DNAT, so only the node rule is ever matched — there is
+#
+# THE NODE IP, 172.22.0.2/32 — read this once, then take every `cidr:
+# 172.22.0.2/32` below as a reference back here.
+#
+# It is ENVIRONMENT-SPECIFIC: Docker does not hand every machine the same `kind`
+# bridge subnet. `scripts/cluster-up.sh` prints the node IP and bridge CIDR on
+# every run; `kubectl get nodes -o wide` shows it too. If it differs from the
+# value here, update all SIX rules below or port-forward, the kubelet scrape,
+# the operator webhook and the custom-metrics API will each hang.
+#
+# It stands in for three different callers, all of which reach a pod from the
+# node's host network rather than from another pod:
+#   * the kubelet — it opens `kubectl port-forward` connections into the pod
+#     network on the host's behalf, and is itself scraped on 10250;
+#   * the kube-apiserver — the operator's admission webhook, and the
+#     aggregation layer proxying custom.metrics.k8s.io to prometheus-adapter;
+#   * anything reaching a ClusterIP. Prometheus talks to the API server via
+#     10.96.0.1:443, which kube-proxy DNATs to 172.22.0.2:6443; Calico evaluates
+#     policy after DNAT, so only the node rule is ever matched and there is
 #     deliberately no ClusterIP rule here.
+#
+# The six rules using it: allow-apiserver-egress, the kubelet clause of
+# allow-prometheus-scrape-egress, and the ingress of allow-prometheus-ingress,
+# allow-grafana, allow-operator-ingress and allow-prometheus-adapter.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -76,8 +91,8 @@ spec:
       app.kubernetes.io/name: prometheus
   policyTypes: [Egress]
   egress:
-    # kubelet on the node: /metrics and /metrics/cadvisor — the source of every
-    # per-pod CPU/memory series the dashboard draws.
+    # kubelet (node IP — see header): /metrics and /metrics/cadvisor, the source
+    # of every per-pod CPU/memory series the dashboard draws.
     - to:
         - ipBlock:
             cidr: 172.22.0.2/32
@@ -188,10 +203,8 @@ spec:
       ports:
         - port: 9090
           protocol: TCP
-    # `kubectl port-forward` arrives from the node, not from a pod: the kubelet
-    # opens the connection into the pod network on the host's behalf, so the
-    # source address is the node IP. Without this the forward connects and then
-    # hangs. Same reason as the Grafana rule below.
+    # `kubectl port-forward` (node IP — see header). Without this the forward
+    # connects and then hangs.
     - from:
         - ipBlock:
             cidr: 172.22.0.2/32
@@ -210,8 +223,8 @@ spec:
       app.kubernetes.io/name: grafana
   policyTypes: [Ingress, Egress]
   ingress:
-    # `kubectl port-forward` from the host (see above). Grafana is deliberately
-    # not exposed through the gateway.
+    # `kubectl port-forward` (node IP — see header). Grafana is deliberately not
+    # exposed through the gateway.
     - from:
         - ipBlock:
             cidr: 172.22.0.2/32
@@ -249,7 +262,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     # The API server calls the operator's admission webhook (PrometheusRule
-    # validation) on 10250, from the node.
+    # validation) on 10250 (node IP — see header).
     - from:
         - ipBlock:
             cidr: 172.22.0.2/32
@@ -300,8 +313,7 @@ spec:
   ingress:
     # The aggregation layer: the kube-apiserver proxies every
     # custom.metrics.k8s.io request to the adapter's Service -> pod secure port
-    # (chart default listenPort 6443). On kind the API server runs on the node's
-    # host network, so the connection arrives from the node IP, not from a pod.
+    # (chart default listenPort 6443), from the node IP — see header.
     - from:
         - ipBlock:
             cidr: 172.22.0.2/32
