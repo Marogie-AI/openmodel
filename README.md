@@ -1,6 +1,6 @@
 # OpenModel API
 
-OpenAI-compatible inference platform on Kubernetes. Built to learn the stack:
+OpenAI-compatible inference platform on Kubernetes.
 FastAPI gateway, Ollama backends, Postgres, Redis, kind + Calico + Envoy Gateway,
 Prometheus/Grafana, HPA, CI.
 
@@ -20,7 +20,7 @@ client ──HTTPS api.openmodel.test──▶ Envoy Gateway
 | 1 | Gateway core ✅ | FastAPI: models, chat, completions, embeddings (sync+SSE), Ollama backend, metrics, compose |
 | 2 | Platform layer ✅ | Postgres schema, API keys, admin, rate limit, usage |
 | 3 | Cluster ✅ | kind, namespaces, Kustomize, StatefulSets, Gateway, NetworkPolicy, TLS |
-| 4 | Ops + scale | Prometheus, Grafana, HPA on in-flight requests, k6, second model |
+| 4 | Ops + scale ✅ | Prometheus, Grafana, HPA on in-flight requests, k6, second model |
 | 5 | Delivery + chaos | GitHub Actions, GHCR, kind e2e, chaos runbook |
 
 ## Quickstart
@@ -88,12 +88,43 @@ cd api && OPENMODEL_BASE_URL=https://api.openmodel.test/v1 \
   OPENMODEL_INSECURE_TLS=1 OPENMODEL_ADMIN_TOKEN="$ADMIN_TOKEN" uv run pytest -m e2e
 ```
 
-Memory: give Docker Desktop 12 GB if you can. 8 GB works with one model pulled
-and no monitoring stack, but a second model or another project's containers
-will push Ollama into `model requires more system memory` and chat requests
-will 502 while embeddings keep working.
+## Watch it
+
+Prometheus, Grafana and the HPA come up with the cluster. Reach them by
+port-forward — they are not exposed through the gateway:
+
+```sh
+kubectl -n openmodel-monitoring port-forward svc/kps-grafana 3000:80
+# user admin, password from kubernetes/overlays/dev/secrets/grafana.env
+```
+
+Dashboard uid `openmodel`: in-flight by model, TTFT p95, tokens/s, request rate,
+pod CPU and memory. Alongside it:
+
+```sh
+kubectl get hpa api -n openmodel-api -w   # 2..10 api pods on average in-flight
+kubectl top pods -A                       # what is actually eating the node
+```
+
+Then put load on it, with a pro key (same admin calls as above, `"plan_code":"pro"`
+— see [scripts/load-test/README.md](scripts/load-test/README.md)):
+
+```sh
+k6 run -e INSECURE=1 -e API_KEY="$KEY" scripts/load-test/k6.js
+```
+
+Watch the API replicas climb while tokens per second does not: the gateway is
+not the bottleneck. That story, with the drills, is in
+[docs/runbooks/04-ops-scale.md](docs/runbooks/04-ops-scale.md).
+
+Memory: give Docker Desktop 12 GB if you can. 8 GB works with both small models
+and the lean monitoring stack (no node-exporter, no Alertmanager, 2h retention),
+but it is tight — another project's containers will push Ollama into
+`model requires more system memory` and chat requests will 502 while embeddings
+keep working.
 
 Design: [docs/specs/2026-09-10-openmodel-design.md](docs/specs/2026-09-10-openmodel-design.md).
 Runbooks: [gateway core](docs/runbooks/01-gateway-core.md),
 [platform layer](docs/runbooks/02-platform-layer.md),
-[cluster](docs/runbooks/03-cluster.md).
+[cluster](docs/runbooks/03-cluster.md),
+[ops + scale](docs/runbooks/04-ops-scale.md).
