@@ -3,10 +3,11 @@ import asyncio
 import httpx
 import pytest
 import respx
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
-from app.metrics import track
-from tests.conftest import BACKEND_URL
+from app.main import create_app
+from app.metrics import llm_inflight, track
+from tests.conftest import BACKEND_URL, TEST_REGISTRY
 from tests.test_chat import BODY, CHAT_URL, ndjson, ollama_response, sse_data
 
 
@@ -187,3 +188,21 @@ async def test_client_cancellation_is_not_an_error(client: AsyncClient) -> None:
     assert await sample(client, error) == before[0]
     assert await sample(client, ok) == before[1] + 1
     assert 'llm_inflight{model="qwen2.5:0.5b"} 0.0' in (await client.get("/metrics")).text
+
+
+async def test_inflight_series_exist_before_any_llm_call() -> None:
+    """A pod must export `llm_inflight{model=...} 0` from startup, not on first request.
+
+    prometheus_client emits no series at all for a labelled metric until a child
+    exists, so without the pre-creation in `create_app` a freshly rolled pod is
+    invisible to prometheus-adapter and the HPA reads `<unknown>`. Clearing first
+    makes this fail if that loop is ever removed, whatever ran before it.
+    """
+    llm_inflight.clear()
+    app = create_app(TEST_REGISTRY)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        body = (await client.get("/metrics")).text
+
+    for spec in TEST_REGISTRY.list():
+        assert f'llm_inflight{{model="{spec.name}"}} 0.0' in body

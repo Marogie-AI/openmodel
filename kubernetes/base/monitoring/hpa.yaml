@@ -10,12 +10,8 @@
 # (monitoring/prometheus-adapter.values.yaml), which serves it under
 # custom.metrics.k8s.io as a per-Pod metric.
 #
-# One surprise worth knowing: `llm_inflight` is a *labelled* gauge, so a freshly
-# started pod exports no series at all until it has served its first request.
-# Until then the adapter has nothing to return for it and the HPA reports
-# TARGETS `<unknown>`. Harmless — the first request that lands creates the
-# series at 1 and it stays at 0 from then on — but a rollout followed by a
-# `get hpa` that says `<unknown>` is expected, not a broken adapter.
+# `llm_inflight` is a labelled gauge, so pods must export it from startup or the
+# HPA reads `<unknown>` after a rollout: see `create_app` in api/app/main.py.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

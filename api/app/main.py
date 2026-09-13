@@ -26,7 +26,7 @@ from app.errors import (
     envelope,
 )
 from app.logging import RequestIdMiddleware, configure_logging
-from app.metrics import MetricsMiddleware
+from app.metrics import MetricsMiddleware, llm_inflight
 from app.ratelimit import enforce
 from app.router import Registry
 from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models, usage
@@ -123,6 +123,14 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="OpenModel API", lifespan=lifespan)
     app.state.registry = registry or Registry.from_yaml(settings.models_file)
+    # Touch each gauge child so the pod exports `llm_inflight{model=...} 0` from
+    # startup. A labelled prometheus_client metric emits no series at all until a
+    # child exists, so without this a pod that has not yet served a request is
+    # invisible to prometheus-adapter and the HPA reads `<unknown>` after every
+    # rollout. Only the gauge: the counters label on status too, and pre-creating
+    # every combination would invent series that never happened.
+    for spec in app.state.registry.list():
+        llm_inflight.labels(spec.name)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(MetricsMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
