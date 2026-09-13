@@ -34,6 +34,9 @@ const scenarios = {
     timeUnit: '1s',
     duration: '60s',
     preAllocatedVUs: 3,
+    // Under queueing a sync chat outlives its 1s slot, so k6 needs room to add
+    // VUs; past maxVUs it drops iterations instead, which the summary prints.
+    maxVUs: 6,
     exec: 'chatSync',
   },
   embeddings: {
@@ -42,6 +45,7 @@ const scenarios = {
     timeUnit: '1s',
     duration: '60s',
     preAllocatedVUs: 2,
+    maxVUs: 4,
     exec: 'embeddings',
   },
 };
@@ -89,7 +93,14 @@ export function chatStream() {
   const res = http.post(`${BASE_URL}/v1/chat/completions`, chat(true, 64), params('chat_stream'));
   check(res, {
     'stream 200': (r) => r.status === 200,
-    'stream has deltas': (r) => r.body && r.body.includes('data: ') && r.body.includes('[DONE]'),
+    // `data:` and `[DONE]` alone would also pass for a stream whose only event
+    // is an error, so require an actual content delta and no error event.
+    'stream has content': (r) =>
+      !!r.body &&
+      r.body.includes('data: ') &&
+      r.body.includes('[DONE]') &&
+      r.body.includes('"content":"') &&
+      !r.body.includes('"error"'),
   });
 }
 
@@ -125,6 +136,9 @@ export function handleSummary(data) {
     `duration avg    ${n('http_req_duration', 'avg')} ms`,
     `duration p(95)  ${n('http_req_duration', 'p(95)')} ms`,
     `checks passed   ${n('checks', 'passes')} / failed ${n('checks', 'fails')}`,
+    // Not a threshold: a slow backend drops iterations by design, and failing
+    // the run for it would just hide the number that explains the run.
+    `dropped iters   ${n('dropped_iterations', 'count')}`,
     '',
   ].join('\n');
   return {

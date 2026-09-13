@@ -55,18 +55,33 @@ the self-signed certificate, `CHAT_MODEL` / `EMBED_MODEL`, and
 
 ## Read the summary
 
-stdout ends with the five numbers that matter:
+stdout ends with the numbers that matter. This is a real run of this profile, on
+an 8 GB Docker Desktop with the model already loaded and swap exhausted — an
+example of a *bad* run, kept because it is the one that was measured:
 
 ```
-requests        446.00 (4.63/s)
-failed          0.00%
-duration avg    2431.19 ms
-duration p(95)  8064.15 ms
-checks passed   892.00 / failed 0.00
+requests          9.00 (0.13/s)
+failed           78.00%
+duration avg    61678.67 ms
+duration p(95)  70344.09 ms
+checks passed    4.00 / failed 14.00
 ```
+
+Nine requests in ninety seconds at a minute each: the backend, not the gateway.
+A healthy run on a host with headroom looks like a few hundred requests, `failed`
+at 0%, `p(95)` a few seconds, every check passing, and `dropped iters` at 0.
 
 Thresholds: `http_req_failed < 5%` and `http_req_duration p(95) < 10s`. k6 exits
-non-zero when either is crossed. The whole k6 summary object is also written to
+non-zero when either is crossed.
+
+`dropped iters` is printed but deliberately *not* a threshold. The two
+arrival-rate scenarios hold a fixed request rate; when the backend cannot keep
+up, k6 adds VUs to `maxVUs` and then drops the iterations it cannot start. A
+non-zero count therefore means "the backend could not sustain the offered rate",
+which is a finding about the cluster, not a broken test — failing the run on it
+would only hide the number.
+
+The whole k6 summary object is also written to
 `scripts/load-test/summary.json` (git-ignored) — use it to diff runs:
 
 ```sh

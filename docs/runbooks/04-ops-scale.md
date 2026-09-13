@@ -164,7 +164,7 @@ the only number that measures *work done* — stayed at zero through a run with
 five api pods, because every stream was still waiting for its first token when
 the run ended. Adding pods added holders of open sockets.
 
-Three api pods forwarding to one Ollama is three queues in front of one kitchen.
+Five api pods forwarding to one Ollama is five queues in front of one kitchen.
 
 ### The `OLLAMA_NUM_PARALLEL` experiment
 
@@ -297,12 +297,18 @@ Warning  Unhealthy  2s  kubelet  Startup probe failed: Get "http://192.168.120.2
                                  context deadline exceeded
 ```
 
-So the RWO lesson is real but conditional: add a second node (or any real CSI
-storage that only attaches to one node at a time) and the second pod stays
-`Pending` on `Multi-Attach error for volume`. On kind you get a different and
-worse outcome — two Ollama processes writing to one model directory and
-competing for the same CPU and memory, which is why the phase adds capacity the
-other way, with a separate Deployment and its own PVC:
+So the RWO lesson is real but narrower than it sounds, and two mechanisms get
+confused. `Multi-Attach error for volume` comes from a *network* CSI driver
+(EBS, Cinder, vSphere) being asked to attach one volume to two nodes; it is an
+attach-time error, not a scheduling one. kind's `local-path` PVs are hostPath
+volumes with node affinity baked in, so on a multi-node kind cluster the
+scheduler simply places every replica on the PV's node and mounts the volume
+into all of them — the same outcome as here, just less obviously. The constraint
+that really means "one pod" is the `ReadWriteOncePod` access mode; RWO never
+promised it. On this single node you get the worse outcome — two Ollama
+processes writing to one model directory and competing for the same CPU and
+memory, which is why the phase adds capacity the other way, with a separate
+Deployment and its own PVC:
 
 ```sh
 kubectl -n openmodel-inference scale deploy/ollama --replicas=1
@@ -358,7 +364,12 @@ increase(kube_pod_container_status_restarts_total{namespace="openmodel-api"}[15m
 {pod="api-5d99b4d46d-x5gbv", container="api"}   4.09
 ```
 
-and the rule fires:
+The `RESTARTS 0` in the `get pods` paste above and the `3.03` here are the same
+container two minutes apart: the pod had just been created when the first was
+taken and had crash-looped three times by the second. `increase()` over a 15m
+window also interpolates, which is why a counter that moved by 3 reads 3.03.
+
+The rule fires:
 
 ```
 curl -s localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.labels.alertname=="ApiPodRestarts")'

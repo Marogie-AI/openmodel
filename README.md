@@ -20,7 +20,7 @@ client ──HTTPS api.openmodel.test──▶ Envoy Gateway
 | 1 | Gateway core ✅ | FastAPI: models, chat, completions, embeddings (sync+SSE), Ollama backend, metrics, compose |
 | 2 | Platform layer ✅ | Postgres schema, API keys, admin, rate limit, usage |
 | 3 | Cluster ✅ | kind, namespaces, Kustomize, StatefulSets, Gateway, NetworkPolicy, TLS |
-| 4 | Ops + scale ✅ | Prometheus, Grafana, HPA on in-flight requests, k6, second model |
+| 4 | Ops + scale — in progress | Prometheus, Grafana, HPA on in-flight requests, k6, second model. Built and drilled; the e2e suite is 5/9 on an 8GB host, see [runbook 04](docs/runbooks/04-ops-scale.md) |
 | 5 | Delivery + chaos | GitHub Actions, GHCR, kind e2e, chaos runbook |
 
 ## Quickstart
