@@ -11,3 +11,4 @@ secrets/
 kubernetes/overlays/dev/secrets/*
 !kubernetes/overlays/dev/secrets/.gitkeep
 scripts/load-test/summary.json
+docs/
