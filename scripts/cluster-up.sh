@@ -11,6 +11,7 @@ ENVOY_GATEWAY_VERSION=v1.4.0
 CERT_MANAGER_VERSION=v1.17.2
 KUBE_PROMETHEUS_STACK_VERSION=77.5.0
 METRICS_SERVER_VERSION=3.13.0
+PROMETHEUS_ADAPTER_VERSION=4.14.1
 
 if kind get clusters | grep -qx "$CLUSTER"; then
   echo "==> kind cluster '$CLUSTER' already exists, skipping create"
@@ -85,6 +86,13 @@ helm upgrade --install kps prometheus-community/kube-prometheus-stack \
 helm upgrade --install metrics-server metrics-server/metrics-server \
   --version "$METRICS_SERVER_VERSION" -n kube-system \
   -f "$REPO_ROOT/monitoring/metrics-server.values.yaml" --wait --timeout 5m
+
+# prometheus-adapter serves custom.metrics.k8s.io (llm_inflight) for the api
+# HPA. It goes after kps because it needs the Prometheus Service to exist to
+# pass its own readiness probe under --wait.
+helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
+  --version "$PROMETHEUS_ADAPTER_VERSION" -n openmodel-monitoring \
+  -f "$REPO_ROOT/monitoring/prometheus-adapter.values.yaml" --wait --timeout 5m
 
 # Two policy files hardcode this environment's addressing: inference.yaml carves
 # the node's own network out of 0.0.0.0/0 by CIDR, and monitoring.yaml allows the

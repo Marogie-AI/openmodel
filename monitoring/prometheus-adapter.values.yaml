@@ -1,0 +1,60 @@
+# prometheus-adapter: serves custom.metrics.k8s.io from Prometheus so the HPA in
+# kubernetes/base/monitoring/hpa.yaml can scale the api Deployment on
+# `llm_inflight` (in-flight LLM requests), a metric metrics-server cannot see.
+#
+# Installed by scripts/cluster-up.sh as release `prometheus-adapter` in
+# openmodel-monitoring (chart prometheus-community/prometheus-adapter 4.14.1).
+
+prometheus:
+  # In-namespace Service of the kube-prometheus-stack release `kps`. The chart
+  # templates this value, so the FQDN is spelled out rather than relying on the
+  # pod's DNS search path.
+  url: http://kps-kube-prometheus-stack-prometheus.openmodel-monitoring.svc
+  port: 9090
+
+rules:
+  # The chart's stock rules expose every container CPU/memory series as a custom
+  # metric — noise we never query, and a relist cost on an 8GB dev cluster.
+  default: false
+  custom:
+    # `llm_inflight` is a gauge from api/app/metrics.py; the ServiceMonitor's
+    # target labels add `namespace` and `pod`. Both must be non-empty for the
+    # adapter to map a series onto a Pod object.
+    - seriesQuery: 'llm_inflight{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      # Exposed under its own name: it is a gauge, so no rate/suffix rewriting.
+      name:
+        matches: "^llm_inflight$"
+        as: "llm_inflight"
+      # Summed by pod: the api exports one series per model label, and the HPA
+      # wants total in-flight requests per pod, not per model.
+      metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# openmodel-monitoring enforces PSA `restricted`. These repeat the chart's own
+# defaults verbatim rather than trusting them to survive a chart bump.
+# readOnlyRootFilesystem is safe here: the chart already mounts an emptyDir at
+# /tmp and passes --cert-dir=/tmp/cert, where the adapter writes its self-signed
+# serving cert — no extraVolumes needed.
+podSecurityContext:
+  # The adapter runs as uid 10001; fsGroup lets it write the /tmp emptyDir.
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
