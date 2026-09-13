@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Admin from "./tabs/Admin";
 import Chat from "./tabs/Chat";
 import Keys from "./tabs/Keys";
 import Setup from "./tabs/Setup";
@@ -35,7 +36,7 @@ export default function App() {
         {tab === "Chat" && <Chat />}
         {tab === "Keys" && <Keys />}
         {tab === "Usage" && <Usage />}
-        {tab === "Admin" && <p className="muted">Admin is coming in the next task.</p>}
+        {tab === "Admin" && <Admin />}
       </main>
     </div>
   );
