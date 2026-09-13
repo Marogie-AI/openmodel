@@ -17,7 +17,7 @@ resources:
   - policies/monitoring.yaml
   - monitoring/servicemonitors.yaml
   - monitoring/prometheusrule.yaml
-  - monitoring/hpa.yaml
+  - api/hpa.yaml
 
 # Stable ConfigMap names so the StatefulSet volume refs do not need editing.
 # Trade-off: no automatic rollout on config change — after editing these files
