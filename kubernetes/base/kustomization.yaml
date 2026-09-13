@@ -6,6 +6,7 @@ resources:
   - data/postgres.yaml
   - data/redis.yaml
   - inference/ollama.yaml
+  - inference/ollama-coder.yaml
   - api/api.yaml
   - edge/gateway.yaml
   - edge/routes.yaml

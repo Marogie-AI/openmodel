@@ -7,9 +7,8 @@ models:
   - name: nomic-embed-text
     backend_url: http://ollama.openmodel-inference:11434
     capabilities: [embedding]
-  # Listed but not pulled: the pro plan grants access to it, so it has to exist
-  # in the registry for plan gating to be exercised. Calls to it 503 until the
-  # weights are pulled — same as the compose registry.
+  # Served by the second backend: the registry is what routes per model, so a
+  # new model is a Deployment plus this one URL. Only the pro plan grants it.
   - name: qwen2.5-coder:0.5b
-    backend_url: http://ollama.openmodel-inference:11434
+    backend_url: http://ollama-coder.openmodel-inference:11434
     capabilities: [chat, completion]

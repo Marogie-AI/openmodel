@@ -1,0 +1,221 @@
+# Second inference backend: a dedicated Ollama serving qwen2.5-coder:0.5b. It
+# is a separate Deployment rather than another model on the shared `ollama` so
+# the registry can route per model and one model's load cannot evict the
+# other's weights from the same OLLAMA_KEEP_ALIVE cache. Shape is deliberately
+# identical to ollama.yaml — only the names, the PVC size and the memory
+# envelope differ (this node has ~3GiB free, so the coder gets a smaller
+# 768Mi/1.5Gi envelope than the shared server's 1Gi/2.5Gi).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-coder-models
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama-coder
+    app.kubernetes.io/part-of: openmodel
+spec:
+  # RWO is all kind's local-path provisioner offers, hence Recreate below.
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      # 5Gi: one 0.5b coder model, half the shared server's claim.
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-coder
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama-coder
+    app.kubernetes.io/part-of: openmodel
+spec:
+  # Service selectors stay on the name label: `component: inference` is shared
+  # with the other Ollama and would fan this Service out across both.
+  selector:
+    app.kubernetes.io/name: ollama-coder
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-coder
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama-coder
+    app.kubernetes.io/component: inference
+    app.kubernetes.io/part-of: openmodel
+spec:
+  replicas: 1
+  # Recreate: the RWO model volume cannot be attached to an old and a new pod
+  # at the same time, so a rolling update would deadlock.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama-coder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama-coder
+        # NetworkPolicies select inference servers by this label, so a third
+        # backend needs no policy edit.
+        app.kubernetes.io/component: inference
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      # The upstream image runs as root and writes to /root/.ollama; PSA
+      # `restricted` forbids that. Run as uid 1000 with HOME and OLLAMA_MODELS
+      # relocated onto writable volumes instead (see env + volumeMounts).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.11.4
+          ports:
+            - name: http
+              containerPort: 11434
+          env:
+            - name: HOME
+              value: /home/ollama
+            - name: OLLAMA_MODELS
+              value: /models
+            - name: OLLAMA_HOST
+              value: 0.0.0.0:11434
+            # Keep weights resident between requests: reloading a model from
+            # the local-path volume on every call dominates small-model latency.
+            - name: OLLAMA_KEEP_ALIVE
+              value: 24h
+            - name: OLLAMA_NUM_PARALLEL
+              value: "2"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: home
+              mountPath: /home/ollama
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            # 30 x 5s = 150s of grace: the first boot enumerates the model dir
+            # and can be slow on a cold local-path volume.
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 20
+            # A loaded server can take over a second to answer /api/tags; the
+            # 1s default made the probe flap and restart a healthy pod.
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: 1500m
+              # 1.5Gi: qwen2.5-coder:0.5b resident plus its KV cache, sized to
+              # fit alongside the shared server on the 8Gi dev node.
+              memory: 1.5Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-coder-models
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-coder-pull
+  namespace: openmodel-inference
+  labels:
+    app.kubernetes.io/name: ollama-coder-pull
+    app.kubernetes.io/component: pull
+    app.kubernetes.io/part-of: openmodel
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama-coder-pull
+        app.kubernetes.io/component: pull
+        app.kubernetes.io/part-of: openmodel
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pull
+          image: ollama/ollama:0.11.4
+          # OLLAMA_HOST as a URL makes the CLI a client of the Deployment, so
+          # the model volume is only ever written by the server process. The
+          # Job therefore does not mount the PVC.
+          env:
+            - name: HOME
+              value: /home/ollama
+            - name: OLLAMA_HOST
+              value: http://ollama-coder.openmodel-inference:11434
+          # On a cold node the Job is scheduled before the server is ready, and
+          # each failed pull burns one of the 4 retries. `ollama list` is the
+          # readiness probe available here — the image ships no curl.
+          command:
+            - /bin/sh
+            - -c
+            - until ollama list >/dev/null 2>&1; do echo waiting for ollama; sleep 5; done && ollama pull qwen2.5-coder:0.5b
+          volumeMounts:
+            - name: home
+              mountPath: /home/ollama
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+# Kustomize has no hooks, so this Job is a plain resource. Re-applying a
+# completed Job is a no-op (the spec is unchanged and immutable). Once the
+# TTL reaps it, the next `apply` recreates and re-runs it — which is safe and
+# cheap: `ollama pull` is a no-op when the weights are already on the PVC.
