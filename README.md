@@ -1,8 +1,8 @@
 # OpenModel API
 
-OpenAI-compatible inference platform on Kubernetes.
-FastAPI gateway, Ollama backends, Postgres, Redis, kind + Calico + Envoy Gateway,
-Prometheus/Grafana, HPA, CI.
+OpenAI-compatible inference platform on Kubernetes: FastAPI gateway, Ollama
+backends, Postgres, Redis, kind + Calico + Envoy Gateway, Prometheus/Grafana,
+HPA, CI.
 
 ```
 client ──HTTPS api.openmodel.test──▶ Envoy Gateway

@@ -1008,7 +1008,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "",
+            "axisLabel": "cores",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
@@ -1047,7 +1047,7 @@
               }
             ]
           },
-          "unit": "short",
+          "unit": "none",
           "min": 0
         },
         "overrides": []
@@ -1885,7 +1885,7 @@
           "instant": false
         }
       ],
-      "description": "Downstream, not upstream: Envoy only creates an upstream _rq_xx series once it has seen that class, so a 5xx panel built on envoy_cluster_upstream_rq_xx reads 'No data' instead of zero. The HCM pre-creates all five classes."
+      "description": "The listener name https-10443 is environment-specific: it is the Gateway's https listener port, so it changes with the Gateway definition. Downstream, not upstream: Envoy only creates an upstream _rq_xx series once it has seen that class, so a 5xx panel built on envoy_cluster_upstream_rq_xx reads 'No data' instead of zero. The HCM pre-creates all five classes."
     }
   ],
   "preload": false,

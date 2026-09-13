@@ -46,7 +46,8 @@ spec:
         - alert: ApiPodRestarts
           # increase() over 15m is the window; `for` only has to outlast one
           # scrape, otherwise a crash that is already over goes unreported.
-          expr: increase(kube_pod_container_status_restarts_total{namespace="openmodel-api"}[15m]) > 0
+          # container="api" keeps a migrate-Job container restart out of it.
+          expr: increase(kube_pod_container_status_restarts_total{namespace="openmodel-api", container="api"}[15m]) > 0
           for: 1m
           labels:
             severity: warning
