@@ -44,6 +44,18 @@ if the HPA shows `<unknown>`, the adapter or the api `/metrics` endpoint is.
 kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/openmodel-api/pods/*/llm_inflight | jq .
 ```
 
+`<unknown>` has a second cause that has nothing to do with the api pods, and it
+was seen during the final review: Prometheus keeps its TSDB on an emptyDir, so
+any replacement of the Prometheus pod — eviction, node restart, helm upgrade —
+empties every series, and the adapter serves nothing until its next successful
+relist (`--metrics-relist-interval`, 1m by default). Under memory pressure that
+relist can instead time out against Prometheus (`dial tcp ...:9090: i/o
+timeout`), which looks identical from the HPA's side. Either way it is fail-safe:
+with no metric to read the HPA holds the current replica count rather than
+collapsing to `minReplicas`, and it recovers on its own once Prometheus is
+serving again. Check `kubectl -n openmodel-monitoring logs deploy/prometheus-adapter`
+before touching the api.
+
 ## Load it
 
 The profile lives in `scripts/load-test/` — how to mint a pro key is in the
