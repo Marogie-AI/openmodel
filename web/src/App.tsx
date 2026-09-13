@@ -1,6 +1,8 @@
 import { useState } from "react";
 import Chat from "./tabs/Chat";
+import Keys from "./tabs/Keys";
 import Setup from "./tabs/Setup";
+import Usage from "./tabs/Usage";
 
 // No router: the console is mounted as static files at /app with html=True, and
 // keeping every tab on one URL is what makes that mount trivial.
@@ -31,9 +33,9 @@ export default function App() {
       <main>
         {tab === "Setup" && <Setup />}
         {tab === "Chat" && <Chat />}
-        {(tab === "Keys" || tab === "Usage" || tab === "Admin") && (
-          <p className="muted">{tab} is coming in the next task.</p>
-        )}
+        {tab === "Keys" && <Keys />}
+        {tab === "Usage" && <Usage />}
+        {tab === "Admin" && <p className="muted">Admin is coming in the next task.</p>}
       </main>
     </div>
   );
