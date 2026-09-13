@@ -45,7 +45,9 @@ services:
       retries: 30
 
   migrate:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     command: ["alembic", "upgrade", "head"]
     environment:
       OPENMODEL_DATABASE_OWNER_URL: postgresql+asyncpg://openmodel_owner:owner@postgres:5432/openmodel
@@ -55,7 +57,9 @@ services:
     restart: "no"
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "${OPENMODEL_HOST_PORT:-8000}:8000"
     environment:

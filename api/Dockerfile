@@ -1,12 +1,22 @@
+FROM oven/bun:1-alpine AS web
+WORKDIR /web
+# bun.loc[k] is a glob so the build still works before the lockfile exists; a
+# real one is matched and honoured by --frozen-lockfile.
+COPY web/package.json web/bun.loc[k] ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN bun run build
+
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
-COPY pyproject.toml uv.lock ./
+COPY api/pyproject.toml api/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-COPY app/ ./app/
-COPY models.yaml ./models.yaml
-COPY alembic.ini ./alembic.ini
-COPY alembic/ ./alembic/
+COPY api/app/ ./app/
+COPY api/models.yaml ./models.yaml
+COPY api/alembic.ini ./alembic.ini
+COPY api/alembic/ ./alembic/
+COPY --from=web /web/dist ./console
 
 FROM python:3.12-slim-bookworm
 COPY --from=builder /app /app

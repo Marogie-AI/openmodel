@@ -1,0 +1,16 @@
+.git/
+.superpowers/
+docs/
+kubernetes/
+monitoring/
+scripts/
+*.md
+api/.venv/
+api/tests/
+web/node_modules/
+web/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
