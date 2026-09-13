@@ -148,12 +148,12 @@ spec:
                 secretKeyRef:
                   name: postgres-credentials
                   key: monitor-password
-          readinessProbe:
-            httpGet:
-              path: /
-              port: metrics
-            initialDelaySeconds: 5
-            periodSeconds: 10
+          # Deliberately no probe: a readiness probe here would make postgres-0
+          # NotReady whenever the exporter is unhealthy (OOM at its 128Mi limit,
+          # a bad password, a bad image bump) and drop the pod out of the Service
+          # endpoints, taking the database away from the API. Monitoring must not
+          # be able to break what it observes. A broken exporter surfaces as a
+          # DOWN Prometheus target and through PostgresDown's absent(pg_up) arm.
           resources:
             requests:
               cpu: 50m
@@ -165,10 +165,13 @@ spec:
             # nobody: the exporter is a static binary that needs no home dir.
             runAsUser: 65534
             runAsGroup: 65534
+            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: config
           configMap:
