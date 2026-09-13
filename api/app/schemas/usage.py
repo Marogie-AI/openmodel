@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class UsageGroup(BaseModel):
@@ -12,12 +12,12 @@ class UsageGroup(BaseModel):
 
 
 class UsageSummary(BaseModel):
-    # "from" is a keyword, so the field is `since` and the alias carries the wire name.
-    model_config = ConfigDict(populate_by_name=True)
+    # "from" is a keyword, so the field is `since`; the serialization alias carries
+    # the wire name and the constructor keeps the Python name.
 
     organization_id: UUID
-    since: datetime = Field(alias="from")
-    until: datetime = Field(alias="to")
+    since: datetime = Field(serialization_alias="from")
+    until: datetime = Field(serialization_alias="to")
     requests: int
     prompt_tokens: int
     completion_tokens: int

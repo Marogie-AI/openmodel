@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -33,7 +35,7 @@ async def make_user(client: AsyncClient, org_id: str, email: str = "a@example.co
 
 # The third case is a non-ASCII token: Starlette decodes headers latin-1, and comparing that
 # against the token as `str` would raise inside hmac.compare_digest.
-BAD_TOKENS: list[dict[str, str | bytes]] = [
+BAD_TOKENS: list[dict[str, Any]] = [
     {},
     {"X-Admin-Token": "wrong"},
     {"X-Admin-Token": "tok\u00e9n".encode("latin-1")},
@@ -42,7 +44,7 @@ BAD_TOKENS: list[dict[str, str | bytes]] = [
 
 @pytest.mark.parametrize("headers", BAD_TOKENS)
 async def test_admin_requires_the_admin_token(
-    db_client: AsyncClient, headers: dict[str, str | bytes]
+    db_client: AsyncClient, headers: dict[str, Any]
 ) -> None:
     response = await db_client.get("/admin/plans", headers=headers)
 

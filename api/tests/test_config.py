@@ -19,7 +19,7 @@ from app.config import Settings
 )
 def test_settings_rejects_unsafe_values(kwargs: dict[str, str]) -> None:
     with pytest.raises(ValidationError):
-        Settings(**kwargs)
+        Settings.model_validate(kwargs)
 
 
 def test_settings_accepts_sane_values() -> None:

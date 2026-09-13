@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -13,7 +13,7 @@ import respx
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import ApiKey, Request
 from app.usage import schedule_write
@@ -132,7 +132,8 @@ async def test_a_broken_writer_does_not_affect_the_response(
     def exploding() -> AsyncSession:
         raise RuntimeError("no database today")
 
-    db_app.state.usage_sink = partial(schedule_write, exploding, db_app.state.usage_tasks)
+    broken = cast(async_sessionmaker[AsyncSession], exploding)
+    db_app.state.usage_sink = partial(schedule_write, broken, db_app.state.usage_tasks)
 
     response = await auth_client.post("/v1/chat/completions", json=BODY)
 

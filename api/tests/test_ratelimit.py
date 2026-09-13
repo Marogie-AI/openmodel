@@ -64,7 +64,9 @@ async def concurrency_count(redis: aioredis.Redis) -> int:
     keys = await redis.keys("cc:*")
     if not keys:
         return 0
-    return int(await redis.get(keys[0]))
+    value = await redis.get(keys[0])
+    assert isinstance(value, str)
+    return int(value)
 
 
 # --- token bucket ------------------------------------------------------------
@@ -254,6 +256,7 @@ async def test_the_plan_concurrency_cap_refuses_the_extra_request(
     # Warm the auth cache so the held slot below is the only thing in the org's way.
     await auth_client.post("/v1/chat/completions", json=BODY)
     org_key = (await redis_client.keys("cc:*"))[0]
+    assert isinstance(org_key, str)
     org = UUID(org_key.removeprefix("cc:"))
 
     async with ConcurrencySlot(redis_client, org, 1):
@@ -272,7 +275,9 @@ async def test_a_stream_over_the_cap_is_a_429_before_any_chunk(
     await set_free_plan(db_client, concurrency=1)
     respx.post(CHAT_URL).mock(return_value=ollama_reply())
     await auth_client.post("/v1/chat/completions", json=BODY)  # warms the auth cache
-    org = UUID((await redis_client.keys("cc:*"))[0].removeprefix("cc:"))
+    org_key = (await redis_client.keys("cc:*"))[0]
+    assert isinstance(org_key, str)
+    org = UUID(org_key.removeprefix("cc:"))
 
     async with ConcurrencySlot(redis_client, org, 1):
         response = await auth_client.post("/v1/chat/completions", json={**BODY, "stream": True})

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     models_file: Path = Path("models.yaml")
     log_level: str = "INFO"
-    environment: str = Field("dev", pattern=r"^[a-z]+$")
+    environment: str = Field(default="dev", pattern=r"^[a-z]+$")
     backend_connect_timeout_s: float = 2.0
     backend_read_timeout_s: float = 120.0
     backend_retries: int = 2
@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://openmodel_app:app@localhost:5432/openmodel"
     database_owner_url: str = "postgresql+asyncpg://openmodel_owner:owner@localhost:5432/openmodel"
     redis_url: str = "redis://localhost:6379/0"
-    key_pepper: str = Field("dev-pepper-change-me", min_length=16)
-    admin_token: str = Field("dev-admin-token-change-me", min_length=16)
+    key_pepper: str = Field(default="dev-pepper-change-me", min_length=16)
+    admin_token: str = Field(default="dev-admin-token-change-me", min_length=16)
     auth_cache_ttl_s: int = 300
     db_pool_size: int = 3
     db_max_overflow: int = 2
