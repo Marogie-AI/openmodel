@@ -89,7 +89,10 @@ metadata:
     app.kubernetes.io/name: api
     app.kubernetes.io/part-of: openmodel
 spec:
-  replicas: 2
+  # No `replicas`: the HorizontalPodAutoscaler in
+  # kubernetes/base/monitoring/hpa.yaml owns the count (min 2). Setting it here
+  # too would make every `kubectl apply -k` reset the Deployment to 2 and fight
+  # the HPA for a reconcile cycle.
   # Deliberately not narrowed to component=api: a Deployment's selector is
   # immutable, and the ReplicaSet's pod-template-hash already keeps the migrate
   # Job's pods (same name label) from ever being adopted here.

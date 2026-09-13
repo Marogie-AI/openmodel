@@ -1,0 +1,62 @@
+# Scales the api Deployment on in-flight LLM requests rather than CPU.
+#
+# Why not CPU: a streaming LLM request is almost entirely wait — the api pod
+# holds an open connection to Ollama and forwards tokens. Eight concurrent
+# streams barely move CPU, so a CPU HPA would never fire while the pods are in
+# fact saturated. `llm_inflight` (a gauge in api/app/metrics.py) counts exactly
+# the thing that is scarce.
+#
+# The metric reaches the HPA controller through prometheus-adapter
+# (monitoring/prometheus-adapter.values.yaml), which serves it under
+# custom.metrics.k8s.io as a per-Pod metric.
+#
+# One surprise worth knowing: `llm_inflight` is a *labelled* gauge, so a freshly
+# started pod exports no series at all until it has served its first request.
+# Until then the adapter has nothing to return for it and the HPA reports
+# TARGETS `<unknown>`. Harmless — the first request that lands creates the
+# series at 1 and it stays at 0 from then on — but a rollout followed by a
+# `get hpa` that says `<unknown>` is expected, not a broken adapter.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: openmodel-api
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: openmodel
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  # Floor of 2 keeps a rolling restart from dropping to a single pod. Ceiling of
+  # 10 is a memory bound, not a throughput one: 10 x 128Mi request fits the
+  # single kind node, and scaling past it would only queue harder on Ollama —
+  # the api is not the bottleneck (see docs/runbooks/04-ops-scale.md).
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: llm_inflight
+        target:
+          # Average across pods, so the target is "2 concurrent requests each",
+          # independent of the current replica count.
+          type: AverageValue
+          averageValue: "2"
+  behavior:
+    scaleUp:
+      # No stabilization: a burst of streams is the signal, and waiting out a
+      # window means serving it entirely from the pods that are already full.
+      stabilizationWindowSeconds: 0
+    scaleDown:
+      # 60s rather than the 300s default — deliberately short so the scale drill
+      # finishes in one sitting. Raise it for anything real: an idle gap between
+      # bursts should not cost a pod.
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
