@@ -9,6 +9,7 @@ import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from redis.exceptions import RedisError
 from sqlalchemy.exc import InterfaceError, OperationalError
 
@@ -166,6 +167,10 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(keys.router, dependencies=limited)
     app.include_router(usage.router, dependencies=authed)
     app.include_router(metrics.router)
+    # Conditional: only the image has a bundle, so the tests and a bare local uvicorn run
+    # without one. html=True is the whole SPA story — the console uses no client-side router.
+    if settings.console_dir.is_dir():
+        app.mount("/app", StaticFiles(directory=settings.console_dir, html=True), name="console")
     return app
 
 

@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OPENMODEL_")
 
     models_file: Path = Path("models.yaml")
+    # Relative to the container WORKDIR /app, where the Dockerfile drops the console bundle.
+    console_dir: Path = Path("console")
     log_level: str = "INFO"
     environment: str = Field(default="dev", pattern=r"^[a-z]+$")
     backend_connect_timeout_s: float = 2.0
