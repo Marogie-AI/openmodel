@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { SessionProvider } from "./auth/session";
 import App from "./App";
 import "./index.css";
 
@@ -14,7 +15,9 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <SessionProvider>
+        <App />
+      </SessionProvider>
     </QueryClientProvider>
   </StrictMode>,
 );
