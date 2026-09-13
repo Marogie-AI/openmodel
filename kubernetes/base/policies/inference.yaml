@@ -46,9 +46,11 @@ metadata:
   name: allow-ollama-ingress
   namespace: openmodel-inference
 spec:
+  # Every inference backend, by role rather than by name: `ollama` and
+  # `ollama-coder` today, any future model server without a policy edit.
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: ollama
+      app.kubernetes.io/component: inference
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -60,10 +62,10 @@ spec:
             matchLabels:
               app.kubernetes.io/name: api
               app.kubernetes.io/component: api
-        # ollama-pull Job (same namespace) -> Ollama, to drive /api/pull.
+        # pull Jobs (same namespace) -> Ollama, to drive /api/pull.
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: ollama-pull
+              app.kubernetes.io/component: pull
       ports:
         - port: 11434
           protocol: TCP
@@ -76,15 +78,15 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: ollama-pull
       app.kubernetes.io/component: pull
   policyTypes: [Egress]
   egress:
-    # ollama-pull -> the Ollama it drives.
+    # Any pull Job -> the inference servers it drives. Each Job only ever dials
+    # the one URL in its OLLAMA_HOST; the policy is the coarser of the two.
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: ollama
+              app.kubernetes.io/component: inference
       ports:
         - port: 11434
           protocol: TCP
@@ -95,9 +97,11 @@ metadata:
   name: allow-ollama-registry-egress
   namespace: openmodel-inference
 spec:
+  # Every inference backend downloads its own weights, so the hole is on the
+  # role label rather than on one server's name.
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: ollama
+      app.kubernetes.io/component: inference
   policyTypes: [Egress]
   egress:
     # ollama -> registry.ollama.ai over TLS. Everything inside the cluster

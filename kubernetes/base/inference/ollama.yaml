@@ -51,6 +51,10 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: ollama
+        # NetworkPolicies select inference servers by this label, so a second
+        # backend needs no policy edit. Not added to `selector.matchLabels`
+        # above: that field is immutable on an existing Deployment.
+        app.kubernetes.io/component: inference
         app.kubernetes.io/part-of: openmodel
     spec:
       # The upstream image runs as root and writes to /root/.ollama; PSA

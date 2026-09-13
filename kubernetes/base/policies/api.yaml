@@ -117,14 +117,16 @@ spec:
       ports:
         - port: 6379
           protocol: TCP
-    # api -> Ollama inference.
+    # api -> every Ollama inference backend. By role, not by name: the registry
+    # routes per model across `ollama` and `ollama-coder`, and /ready probes
+    # all of them, so pinning the name here 503s the pod on a new backend.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: openmodel-inference
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: ollama
+              app.kubernetes.io/component: inference
       ports:
         - port: 11434
           protocol: TCP
