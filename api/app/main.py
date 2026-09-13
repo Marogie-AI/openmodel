@@ -29,7 +29,18 @@ from app.logging import RequestIdMiddleware, configure_logging
 from app.metrics import MetricsMiddleware, llm_inflight
 from app.ratelimit import enforce
 from app.router import Registry
-from app.routes import admin, chat, completions, embeddings, health, keys, metrics, models, usage
+from app.routes import (
+    admin,
+    chat,
+    completions,
+    embeddings,
+    health,
+    keys,
+    me,
+    metrics,
+    models,
+    usage,
+)
 from app.usage import schedule_write
 
 log = structlog.get_logger()
@@ -146,6 +157,8 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     authed = [Depends(require_principal)]
     limited = [Depends(enforce)]
     app.include_router(models.router, dependencies=authed)
+    # Authed, not limited: the console calls it to validate a key, which must not cost a token.
+    app.include_router(me.router, dependencies=authed)
     app.include_router(chat.router, dependencies=limited)
     app.include_router(completions.router, dependencies=limited)
     app.include_router(embeddings.router, dependencies=limited)
