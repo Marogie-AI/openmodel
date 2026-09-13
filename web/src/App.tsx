@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Setup from "./tabs/Setup";
 
 // No router: the console is mounted as static files at /app with html=True, and
 // keeping every tab on one URL is what makes that mount trivial.
@@ -26,9 +27,7 @@ export default function App() {
           ))}
         </nav>
       </header>
-      <main>
-        <p className="muted">{tab} is coming in the next task.</p>
-      </main>
+      <main>{tab === "Setup" ? <Setup /> : <p className="muted">{tab} is coming in the next task.</p>}</main>
     </div>
   );
 }
