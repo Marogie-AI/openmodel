@@ -121,6 +121,41 @@ deployments, the monitoring stack, and another project's containers. On 12 GB
 the same profile is unremarkable. Read every latency number below with that in
 mind: the *shape* is real, the absolute values are a small laptop's.
 
+### Proving it is the host and not the code
+
+The acceptance suite is the cheapest experiment. With everything running it
+fails about half its cases on `upstream connect error` 503, because the API pods
+are being killed by liveness timeouts. Park the two largest non-serving
+consumers and it passes:
+
+```bash
+kubectl -n openmodel-monitoring scale deploy/kps-kube-prometheus-stack-operator --replicas=0
+kubectl -n openmodel-monitoring scale statefulset/prometheus-kps-kube-prometheus-stack-prometheus --replicas=0
+kubectl -n openmodel-monitoring scale deploy/kps-grafana --replicas=0
+
+cd api && OPENMODEL_BASE_URL=https://api.openmodel.test/v1 OPENMODEL_INSECURE_TLS=1 \
+  OPENMODEL_ADMIN_TOKEN="$ADMIN" uv run pytest -m e2e -q
+```
+
+```
+9 passed, 174 deselected in 270.96s (0:04:30)
+```
+
+Scale the operator and Grafana back to 1 afterwards; the operator restores the
+Prometheus StatefulSet from its custom resource, so you do not scale that one up
+by hand.
+
+Prometheus was 336 MiB and Grafana 295 MiB at the time — about 630 MiB, which is
+the difference between Ollama holding two models resident and Ollama swapping.
+Four and a half minutes for nine tests is still slow; on a host with headroom the
+same suite runs in seconds. The point is only that the failures were capacity,
+not code.
+
+One more reclaim worth knowing: `kube-apiserver` had grown to 831 MiB of resident
+memory after 38 hours and a dozen crash restarts. Killing its container
+(`crictl rm -f $(crictl ps --name kube-apiserver -q)`) — the kubelet restarts the
+static pod within seconds — gave back about 230 MiB immediately.
+
 ## The bottleneck lesson
 
 Watch the HPA through a run. It does exactly what it was asked to:

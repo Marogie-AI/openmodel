@@ -20,7 +20,7 @@ client ──HTTPS api.openmodel.test──▶ Envoy Gateway
 | 1 | Gateway core ✅ | FastAPI: models, chat, completions, embeddings (sync+SSE), Ollama backend, metrics, compose |
 | 2 | Platform layer ✅ | Postgres schema, API keys, admin, rate limit, usage |
 | 3 | Cluster ✅ | kind, namespaces, Kustomize, StatefulSets, Gateway, NetworkPolicy, TLS |
-| 4 | Ops + scale — in progress | Prometheus, Grafana, HPA on in-flight requests, k6, second model. Built and drilled; the e2e suite is 5/9 on an 8GB host, see [runbook 04](docs/runbooks/04-ops-scale.md) |
+| 4 | Ops + scale ✅ | Prometheus, Grafana, HPA on in-flight requests, k6, second model. The e2e suite passes 9/9, but only with the monitoring stack parked — see [runbook 04](docs/runbooks/04-ops-scale.md) |
 | 5 | Delivery + chaos | GitHub Actions, GHCR, kind e2e, chaos runbook |
 
 ## Quickstart
@@ -117,11 +117,12 @@ Watch the API replicas climb while tokens per second does not: the gateway is
 not the bottleneck. That story, with the drills, is in
 [docs/runbooks/04-ops-scale.md](docs/runbooks/04-ops-scale.md).
 
-Memory: give Docker Desktop 12 GB if you can. 8 GB works with both small models
-and the lean monitoring stack (no node-exporter, no Alertmanager, 2h retention),
-but it is tight — another project's containers will push Ollama into
-`model requires more system memory` and chat requests will 502 while embeddings
-keep working.
+Memory: give Docker Desktop 12 GB if you can. At 8 GB the monitoring stack and
+the two model servers do not fit at the same time under load. The acceptance
+suite passes 9/9 with Prometheus and Grafana scaled to zero and fails around
+half its cases with them running, because Ollama is pushed into
+`model requires more system memory` and the kubelet starts timing out liveness
+probes. Runbook 04 has the measurements and the park-and-restore commands.
 
 Design: [docs/specs/2026-09-10-openmodel-design.md](docs/specs/2026-09-10-openmodel-design.md).
 Runbooks: [gateway core](docs/runbooks/01-gateway-core.md),
