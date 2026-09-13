@@ -26,8 +26,8 @@ generatorOptions:
   disableNameSuffixHash: true
 
 configMapGenerator:
-  # Files under kubernetes/base/data are copies of api/sql/*, kept in sync by
-  # scripts/sync-sql.sh (kustomize cannot read outside its root).
+  # These files are the single source for both deployments: kustomize cannot
+  # read outside its own root, so they live here and compose mounts them.
   - name: postgres-config
     namespace: openmodel-data
     files:
