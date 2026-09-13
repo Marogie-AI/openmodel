@@ -107,6 +107,9 @@ spec:
               path: /api/tags
               port: 11434
             periodSeconds: 20
+            # A loaded server can take over a second to answer /api/tags; the
+            # 1s default made the probe flap and restart a healthy pod.
+            timeoutSeconds: 3
             failureThreshold: 3
           resources:
             requests:
