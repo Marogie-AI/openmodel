@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SessionProvider } from "./auth/session";
 import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
 const root = document.getElementById("root");
@@ -14,10 +15,12 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 
 createRoot(root).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <SessionProvider>
-        <App />
-      </SessionProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <SessionProvider>
+          <App />
+        </SessionProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );
